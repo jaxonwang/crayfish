@@ -1,3 +1,4 @@
 [submodule "gex-sys/gasnet"]
 	path = gex-sys/gasnet
 	url = https://bitbucket.org/berkeleylab/gasnet/
+    ignore = dirty
