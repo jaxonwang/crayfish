@@ -21,7 +21,7 @@ const GASNET_WRAPPER: &str = "gasnet_wrapper";
 
 pub fn main() {
     // config contains version info
-    println!("cargo:rerun-if-changed=gasnet/configure.in");
+    println!("cargo:rerun-if-changed=build.rs");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir);
@@ -30,8 +30,10 @@ pub fn main() {
 
     // bootstrap
     let mut bt = Command::new("sh");
-    bt.arg("Bootstrap").arg("-T").current_dir(&working_dir);
-    bt.status().unwrap(); // doesn't check error fo rerun
+    bt.arg("Bootstrap").current_dir(&working_dir);
+    if !working_dir.join("configure").exists(){ // no re-bootstrap
+        run_command("bootstrap", &mut bt);
+    }
 
     // configure
     let mut cfg = Command::new("sh");
@@ -45,11 +47,13 @@ pub fn main() {
         }
     }
     cfg.current_dir(&working_dir);
-    run_command("configure", &mut cfg);
+    if !working_dir.join("Makefile").exists(){
+        run_command("configure", &mut cfg);
+    }
 
     // make
     let mut mk = Command::new("make");
-    mk.arg(GASNET_THREADING_ENV);
+    mk.arg(GASNET_THREADING_ENV).arg("-j");
     mk.current_dir(&working_dir);
     run_command("make", &mut mk);
 
@@ -62,7 +66,7 @@ pub fn main() {
     // choose parallel build
     let libname = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
     println!("cargo:rustc-link-lib=static={}", libname);
-    println!("cargo:rustc-link-search={}", libdir.display());
+    println!("cargo:rustc-link-search=native={}", libdir.display());
 
     let headers: [&str; 2] = [&format!("include/{}-conduit", GASNET_CONDUIT), "include"];
     let headers: Vec<PathBuf> = headers.iter().map(|dir| out_dir.join(dir)).collect();
@@ -93,5 +97,5 @@ pub fn main() {
 
     // ask rustc to link the wrapper
     println!("cargo:rustc-link-lib=static={}", GASNET_WRAPPER);
-    println!("cargo:rustc-link-search={}", out_dir.display());
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
 }

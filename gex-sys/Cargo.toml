@@ -6,8 +6,15 @@ edition = "2018"
 description = "Binding to GASNet-EX"
 build = "build.rs"
 
+[build]
+rustflags = ["-Crelocation-model=pic"] 
+
 [dependencies]
 
 [build-dependencies]
 bindgen = "0.53.1"
 cc = "1.0.67"
+
+[[bin]]
+name = "test"
+path = "examples/test.rs"
