@@ -6,9 +6,6 @@ edition = "2018"
 description = "Binding to GASNet-EX"
 build = "build.rs"
 
-[build]
-rustflags = ["-Crelocation-model=pic"] 
-
 [dependencies]
 
 [build-dependencies]

@@ -1,5 +1,6 @@
 use gex_sys;
 
 pub fn main() {
-    println!("{:?}", gex_sys::gex_Client_init());
+    let (args, cl, ep, tm) = gex_sys::gex_Client_init();
+    println!("{:?}", args);
 }

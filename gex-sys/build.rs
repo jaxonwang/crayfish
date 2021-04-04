@@ -2,6 +2,7 @@ use std::env;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::ffi::OsStr;
 
 extern crate bindgen;
 extern crate cc;
@@ -14,10 +15,10 @@ pub fn run_command(which: &str, cmd: &mut Command) {
 
 const GASNET_CONDUIT: &str = "udp";
 const GASNET_THREADING_ENV: &str = "par";
-
 const GASNET_CONDUIT_LIST: [&str; 6] = ["udp", "mpi", "smp", "ucx", "ibv", "aries"];
-
 const GASNET_WRAPPER: &str = "gasnet_wrapper";
+const GASNET_LIBAMUDP: &str = "amudp";
+
 
 pub fn main() {
     // config contains version info
@@ -28,6 +29,7 @@ pub fn main() {
     let libdir = out_dir.join("lib");
     let working_dir = Path::new("gasnet");
 
+
     // bootstrap
     let mut bt = Command::new("sh");
     bt.arg("Bootstrap").current_dir(&working_dir);
@@ -37,6 +39,9 @@ pub fn main() {
 
     // configure
     let mut cfg = Command::new("sh");
+    let envs = vec![("CFLAGS", "-fPIC"), ("CXXFLAGS", "-fPIC")];
+    let envs:Vec<_> = envs.iter().map(|(k, v)|(OsStr::new(k), OsStr::new(v))).collect();
+    cfg.envs(envs);
     cfg.arg("configure")
         .arg(format!("--prefix={}", out_dir.display()));
     for c in GASNET_CONDUIT_LIST.iter() {
@@ -47,9 +52,7 @@ pub fn main() {
         }
     }
     cfg.current_dir(&working_dir);
-    if !working_dir.join("Makefile").exists(){
-        run_command("configure", &mut cfg);
-    }
+    run_command("configure", &mut cfg);
 
     // make
     let mut mk = Command::new("make");
@@ -63,9 +66,11 @@ pub fn main() {
     is.current_dir(&working_dir);
     run_command("install", &mut is);
 
-    // choose parallel build
-    let libname = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
-    println!("cargo:rustc-link-lib=static={}", libname);
+    // choose parallel build library
+    let libgasnet = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
+    println!("cargo:rustc-link-lib=static={}", libgasnet);
+    println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
+    println!("cargo:rustc-link-lib=dylib=stdc++");
     println!("cargo:rustc-link-search=native={}", libdir.display());
 
     let headers: [&str; 2] = [&format!("include/{}-conduit", GASNET_CONDUIT), "include"];
