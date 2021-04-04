@@ -21,6 +21,4 @@ version = "1.7.0"
 default-features = false
 features = ["std"]
 
-[[bin]]
-name = "gastest"
-path = "examples/test.rs"
+[lib]

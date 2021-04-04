@@ -22,7 +22,7 @@ pub fn gex_Client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t){
     let mut ep = MaybeUninit::<gex_EP_t>::uninit(); 
     let mut tm = MaybeUninit::<gex_TM_t>::uninit(); 
     unsafe{
-            gex_Client_Init_Wrapper(
+            gex_Client_Init_Wrap(
             client.as_mut_ptr(),
             ep.as_mut_ptr(),
             tm.as_mut_ptr(),
@@ -46,3 +46,21 @@ pub fn gex_Client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t){
     }
     (ret, client, ep, tm)
 }
+
+pub fn gex_Segment_QueryAddr(seg: gex_Segment_t) -> *const u8{
+    unsafe{
+        gex_Segment_QueryAddr_Wrap(seg) as *const u8
+    }
+}
+
+pub fn gex_System_QueryJobRank() -> gex_Rank_t{
+    unsafe{
+        gex_System_QueryJobRank_Wrap()
+    }
+} 
+
+pub fn gex_System_QueryJobSize() -> gex_Rank_t{
+    unsafe{
+        gex_System_QueryJobSize_Wrap()
+    }
+} 
