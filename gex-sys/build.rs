@@ -60,6 +60,8 @@ pub fn main() {
         .arg("--enable-par")
         .arg("--disable-parsync")
         .arg("--disable-seq");
+    #[cfg(debug_assertions)]
+    cfg.arg("--enable-debug");
     for c in GASNET_CONDUIT_LIST.iter() {
         if &GASNET_CONDUIT == c {
             cfg.arg(format!("--enable-{}", c));
@@ -91,7 +93,13 @@ pub fn main() {
     let libgasnet = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
     println!("cargo:rustc-link-lib=static={}", libgasnet);
     println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    if cfg!(target_os="macos") {
+        println!("cargo:rustc-link-lib=dylib=c++");
+    } else if cfg!(target_os="linux"){
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    } else{
+        panic!("platform unsupported")
+    }
     println!("cargo:rustc-link-search=native={}", libdir.display());
 
     let conduit_dir = format!("include/{}-conduit", GASNET_CONDUIT);
