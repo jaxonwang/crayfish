@@ -124,3 +124,5 @@ extern gex_Event_t gex_Event_QueryLeaf_Wrap(gex_Event_t root,gex_EC_t event_cate
 extern void gex_System_QueryNbrhdInfo_Wrap(gex_RankInfo_t **info_p,gex_Rank_t *info_count_p,gex_Rank_t *my_info_index_p){ gex_System_QueryNbrhdInfo(info_p,info_count_p,my_info_index_p); }
 extern void gex_System_QueryHostInfo_Wrap(gex_RankInfo_t **info_p,gex_Rank_t *info_count_p,gex_Rank_t *my_info_index_p){ gex_System_QueryHostInfo(info_p,info_count_p,my_info_index_p); }
 extern void gex_System_QueryMyPosition_Wrap(gex_Rank_t *nbrhd_set_size,gex_Rank_t *nbrhd_set_rank,gex_Rank_t *host_set_size,gex_Rank_t *host_set_rank){ gex_System_QueryMyPosition(nbrhd_set_size,nbrhd_set_rank,host_set_size,host_set_rank); }
+
+extern uintptr_t gasnet_getMaxLocalSegmentSize_Wrap(){ return gasnet_getMaxLocalSegmentSize();}

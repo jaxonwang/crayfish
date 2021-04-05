@@ -31,6 +31,9 @@ const GASNET_WRAPPER: &str = "gasnet_wrapper";
 const GASNET_LIBAMUDP: &str = "amudp";
 
 pub fn main() {
+
+    // TODO: cleanup everythin before install
+
     // config contains version info
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -86,6 +89,7 @@ pub fn main() {
     if !out_include_dir.is_dir() || !contains_file(&out_include_dir, "gasnet.h") {
         // only install once. That could cause problem. But if installed, it
         // changes some new timestamp, forcing the cargo rebuild.
+        // TODO: doing that will cause compiling twice from the first build
         run_command("install", &mut is);
     }
 
