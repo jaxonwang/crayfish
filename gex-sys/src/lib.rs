@@ -2,6 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
+#![allow(safe_packed_borrows)] // TODO: remove this when bindgen fix it
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -16,12 +17,16 @@ fn uninit<T>() -> MaybeUninit<T> {
     MaybeUninit::<T>::uninit()
 }
 
-fn assert_gasnet_ok(ret: c_int) {
+pub fn assert_gasnet_ok(ret: c_int) {
     assert_eq!(ret, GASNET_OK as c_int, "GASNet: {}", unsafe {
         CStr::from_ptr(gasnet_ErrorName(ret) as *const c_char)
             .to_str()
             .unwrap()
     });
+}
+
+fn literal_to_pointer(literal: &'static [u8]) -> *const c_char {
+    CStr::from_bytes_with_nul(literal).unwrap().as_ptr()
 }
 
 pub fn gex_client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t) {
@@ -42,7 +47,7 @@ pub fn gex_client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t) {
             client.as_mut_ptr(),
             ep.as_mut_ptr(),
             tm.as_mut_ptr(),
-            null::<c_char>(),
+            literal_to_pointer(b"rust-apgas\0"),
             &mut argc as *mut c_int,
             &mut ptr as *mut *mut *mut c_char,
             0,
@@ -85,4 +90,65 @@ pub fn gex_segment_attach(tm: gex_TM_t, length: usize) -> gex_Segment_t {
         assert_gasnet_ok(gex_Segment_Attach_Wrap(seg.as_mut_ptr(), tm, length));
         seg.assume_init()
     }
+}
+
+pub struct Entrytable {
+    entries: Vec<gex_AM_Entry_t>,
+}
+
+impl Entrytable {
+    pub fn new() -> Self {
+        Entrytable { entries: vec![] }
+    }
+
+    pub fn add(
+        &mut self,
+        f: *const (),
+        flags: gex_Flags_t,
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
+        let handler = unsafe { std::mem::transmute::<*const (), extern "C" fn()>(f) };
+        let entry = gex_AM_Entry_t {
+            gex_index: 0,
+            gex_fnptr: Some(handler),
+            gex_flags: flags,
+            gex_nargs: nargs as c_uint,
+            gex_cdata: null::<c_void>(),
+            gex_name: match name {
+                None => null::<c_char>(),
+                Some(s) => s.as_ptr() as *const c_char,
+            },
+        };
+        self.entries.push(entry);
+    }
+
+    pub fn add_short_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+        self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REQUEST, nargs, name);
+    }
+
+    pub fn add_medium_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+        self.add(f, GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REQUEST, nargs, name);
+    }
+
+    pub fn add_long_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+        self.add(f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST, nargs, name);
+    }
+}
+
+pub fn gex_register_entries(ep: gex_EP_t, entries: &mut Entrytable) {
+    let ref mut et = entries.entries;
+    assert_gasnet_ok(unsafe { gex_EP_RegisterHandlers_Wrap(ep, et.as_mut_ptr(), et.len() as u64) });
+}
+
+pub fn gasnet_get_max_local_segment_size() -> usize {
+    unsafe { gasnet_getMaxLocalSegmentSize_Wrap() }
+}
+
+pub fn gax_system_query_jobrank() -> gex_Rank_t {
+    unsafe { gex_System_QueryJobRank_Wrap() }
+}
+
+pub fn gax_system_query_jobsize() -> gex_Rank_t {
+    unsafe { gex_System_QueryJobSize_Wrap() }
 }

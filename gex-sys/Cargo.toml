@@ -11,7 +11,3 @@ build = "build.rs"
 [build-dependencies]
 bindgen = "0.53.1"
 cc = "1.0.67"
-
-[[bin]]
-name = "test"
-path = "examples/test.rs"

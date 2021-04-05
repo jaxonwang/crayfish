@@ -7,63 +7,46 @@ extern crate gex_sys;
 
 // short
 extern "C" fn handlers(token: gex_Token_t, arg0: gasnet_handler_t) {
-    let srcrank = gex_token_info(token);
-    println!("receive from {}, value {}", srcrank, arg0);
+    let t_info = gex_token_info(token);
+    println!("receive from {}, value {}", t_info.gex_srcrank, arg0);
 }
 
-struct Entrytable {
-    entries: Vec<gex_AM_Entry_t>,
-}
-
-impl Entrytable {
-    pub fn new() -> Self {
-        Entrytable { entries: vec![] }
-    }
-
-    pub fn add<F>(&mut self, f: F, flags: gex_Flags_t, nargs: usize, name: Option<&'static str>) {
-        let handler = unsafe { std::mem::transmute::<F, extern "c" fn()>(f) };
-        let entry = gex_AM_Entry_t {
-            gex_index: 0,
-            gex_fnptr: Some(handler),
-            gex_flags: flags,
-            gex_nargs: nargs as c_uint,
-            gex_cdata: null::<c_void>(),
-            gex_name: match name {
-                None => null::<c_char>(),
-                Some(s) => name.as_ptr() as *const c_char,
-            },
-        };
-        self.entries.push(entry);
-    }
-
-    pub fn add_short_req<F>(&mut self, f: f, nargs: usize, name: Option<&'static str>) {
-        self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REQUEST, nargs, name);
-    }
-
-    pub fn add_medium_req<F>(&mut self, f: f, nargs: usize, name: Option<&'static str>) {
-        self.add(f, GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REQUEST, nargs, name);
-    }
-
-    pub fn add_long_req<F>(&mut self, f: f, nargs: usize, name: Option<&'static str>) {
-        self.add(f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST, nargs, name);
-    }
-}
-
-struct CommunicationContext {
+pub struct CommunicationContext {
     endpoint: gex_EP_t, // thread safe handler
     endpoints_data: Box<Vec<EndpointData>>,
     cmd_args: Vec<String>,
 }
 
+#[derive(Clone)]
 struct EndpointData {
     segment_addr: *const u8,
     segment_len: usize,
     max_request_len: usize,
 }
 
-struct Place {}
+#[derive(Copy, Clone)]
+pub struct Place {
+    rank: i32,
+}
 
-struct PlaceGroup {}
+impl Place {
+    pub fn rank(&self) -> i32 {
+        self.rank
+    }
+}
+
+pub struct PlaceGroup {
+    size: usize, // TODO further api design
+}
+
+impl PlaceGroup {
+    // pub fn iter(&self) -> placeiter{
+    //     (0..self.size)
+    // }
+    pub fn len(&self) -> usize {
+        self.size
+    }
+}
 
 impl CommunicationContext {
     pub fn new() -> Self {
@@ -71,16 +54,37 @@ impl CommunicationContext {
 
         // prepare entry table
         let mut tb = Entrytable::new();
-        tb.add_short_req(handlers, 1, Some("justaname"));
+        tb.add_short_req(handlers as *const (), 1, Some("justaname"));
 
         // register the table
-        assert_gasnet_ok(unsafe { gex_EP_RegisterHandlers_Wrap(ep, tb.as_mut_ptr(), tb.len()) });
+        gex_register_entries(ep, &mut tb);
 
         // init the segment
         let seg_len: usize = 2 * 1024 * 1024 * 1024; // 2 GB
-        let max_seg_len = gasnet_getMaxLocalSegmentSize_Wrap() as usize;
-        let seg_len = usize::max(seg_len, max_seg_len);
+        let max_seg_len = gasnet_get_max_local_segment_size();
+        let seg_len = usize::min(seg_len, max_seg_len);
         let seg = gex_segment_attach(tm, seg_len);
 
+        CommunicationContext {
+            endpoint: ep,
+            endpoints_data: Box::new(vec![]),
+            cmd_args: args,
+        }
+    }
+
+    pub fn cmd_args(&self) -> &[String] {
+        &self.cmd_args[..]
+    }
+
+    pub fn here(&self) -> Place {
+        Place {
+            rank: gax_system_query_jobrank() as i32,
+        }
+    }
+
+    pub fn world(&self) -> PlaceGroup {
+        PlaceGroup {
+            size: gax_system_query_jobsize() as usize,
+        }
     }
 }
