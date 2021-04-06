@@ -126,4 +126,18 @@ extern void gex_System_QueryHostInfo_Wrap(gex_RankInfo_t **info_p,gex_Rank_t *in
 extern void gex_System_QueryMyPosition_Wrap(gex_Rank_t *nbrhd_set_size,gex_Rank_t *nbrhd_set_rank,gex_Rank_t *host_set_size,gex_Rank_t *host_set_rank);
 
 extern uintptr_t gasnet_getMaxLocalSegmentSize_Wrap();
-
+int gex_AM_RequestShort_Wrap0(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags );
+int gex_AM_RequestMedium_Wrap0( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags );
+int gex_AM_RequestLong_Wrap0( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags );
+int gex_AM_RequestShort_Wrap1(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags , gex_AM_Arg_t arg0);
+int gex_AM_RequestMedium_Wrap1( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0);
+int gex_AM_RequestLong_Wrap1( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0);
+int gex_AM_RequestShort_Wrap2(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1);
+int gex_AM_RequestMedium_Wrap2( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1);
+int gex_AM_RequestLong_Wrap2( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1);
+int gex_AM_RequestShort_Wrap3(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2);
+int gex_AM_RequestMedium_Wrap3( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2);
+int gex_AM_RequestLong_Wrap3( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2);
+int gex_AM_RequestShort_Wrap4(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);
+int gex_AM_RequestMedium_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);
+int gex_AM_RequestLong_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);

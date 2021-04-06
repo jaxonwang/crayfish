@@ -6,12 +6,14 @@
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+use std::convert::TryInto;
 use std::default::Default;
 use std::env::args;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::os::raw::*;
 use std::ptr::null;
+use std::ptr::null_mut;
 
 fn uninit<T>() -> MaybeUninit<T> {
     MaybeUninit::<T>::uninit()
@@ -151,4 +153,124 @@ pub fn gax_system_query_jobrank() -> gex_Rank_t {
 
 pub fn gax_system_query_jobsize() -> gex_Rank_t {
     unsafe { gex_System_QueryJobSize_Wrap() }
+}
+
+pub fn gax_segment_query_addr(seg: gex_Segment_t) -> *const c_void {
+    unsafe { gex_Segment_QueryAddr_Wrap(seg) }
+}
+
+pub fn gax_segment_query_size(seg: gex_Segment_t) -> usize {
+    unsafe { gex_Segment_QuerySize_Wrap(seg) }
+}
+
+pub fn gex_event_wait(event: gex_Event_t) {
+    unsafe { gex_Event_Wait_Wrap(event) };
+}
+
+pub fn gex_event_occurs(event: gex_Event_t) -> bool {
+    match unsafe { gex_Event_Test_Wrap(event) } {
+        0 => false,
+        _ => true,
+    }
+}
+
+pub fn gex_ep_query_bound_segment(tm: gex_TM_t, rank: gex_Rank_t) -> (*const c_void, usize) {
+    let mut dest_addr = uninit::<*mut c_void>();
+    let mut size = uninit::<usize>();
+    let event = unsafe {
+        gex_EP_QueryBoundSegmentNB_Wrap(
+            tm,
+            rank,
+            dest_addr.as_mut_ptr(),
+            null_mut::<*mut c_void>(),
+            size.as_mut_ptr(),
+            0,
+        )
+    };
+    let dest_addr = unsafe { dest_addr.assume_init() };
+    let size = unsafe { size.assume_init() };
+    gex_event_wait(event);
+    assert! {size!=0, "size is 0"};
+    (dest_addr, size)
+}
+
+const MAX_ARGS_USED: u32 = 4;
+
+pub fn gex_am_max_global_request_long(tm: gex_TM_t) -> usize {
+    let size;
+    unsafe {
+        let rank = gex_rank_invalid(); // use invalid rank to query global
+        size = gex_AM_MaxRequestLong_Wrap(tm, rank, gex_event_now(), 0, MAX_ARGS_USED);
+    }
+    assert! {size!=0, "size is 0"};
+    size.try_into().unwrap()
+}
+
+pub fn gex_am_max_global_request_medium(tm: gex_TM_t) -> usize {
+    let size;
+    unsafe {
+        let rank = gex_rank_invalid(); // use invalid rank to query global
+        size = gex_AM_MaxRequestMedium_Wrap(tm, rank, gex_event_now(), 0, MAX_ARGS_USED);
+    }
+    assert! {size!=0, "size is 0"};
+    size.try_into().unwrap()
+}
+
+pub fn gex_am_reqeust_short0(tm: gex_TM_t, rank: gex_Rank_t, handler: gex_AM_Index_t) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_RequestShort_Wrap0(tm, rank, handler, 0));
+    }
+}
+
+pub fn gex_am_reqeust_short1(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    arg0: gex_AM_Arg_t,
+) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_RequestShort_Wrap1(tm, rank, handler, 0, arg0));
+    }
+}
+
+pub fn gex_am_reqeust_medium0(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_RequestMedium_Wrap0(
+            tm,
+            rank,
+            handler,
+            source_addr,
+            nbytes,
+            gex_event_now(),
+            0,
+        ));
+    }
+}
+
+pub fn gex_am_reqeust_long0(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    dest_addr: *mut ::std::os::raw::c_void,
+) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_RequestLong_Wrap0(
+            tm,
+            rank,
+            handler,
+            source_addr,
+            nbytes,
+            dest_addr,
+            gex_event_now(),
+            0,
+        ));
+    }
 }
