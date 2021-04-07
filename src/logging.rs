@@ -18,7 +18,7 @@ pub fn set_global_id(id: i32) {
 }
 
 pub fn setup_logger() -> Result<(), fern::InitError> {
-    let mut colors = ColoredLevelConfig::new().info(Color::Green).debug(Color::White);
+    let colors = ColoredLevelConfig::new().info(Color::Green).debug(Color::White);
 
     let mut pkg_name_upper = String::from(meta_data::PKG_NAME);
     pkg_name_upper.make_ascii_uppercase();

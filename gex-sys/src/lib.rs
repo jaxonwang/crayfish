@@ -2,7 +2,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
-#![allow(unaligned_references)] // TODO: remove this when bindgen fix it
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -98,6 +97,13 @@ pub struct Entrytable {
     entries: Vec<gex_AM_Entry_t>,
 }
 
+impl <I: std::slice::SliceIndex<[gex_AM_Entry_t]>> std::ops::Index<I> for Entrytable{
+    type Output = I::Output;
+    fn index(&self, index: I) -> &Self::Output{
+        &self.entries[index]
+    }
+}
+
 impl Entrytable {
     pub fn new() -> Self {
         Entrytable { entries: vec![] }
@@ -174,7 +180,7 @@ pub fn gex_event_occurs(event: gex_Event_t) -> bool {
     }
 }
 
-pub fn gex_ep_query_bound_segment(tm: gex_TM_t, rank: gex_Rank_t) -> (*const c_void, usize) {
+pub fn gex_ep_query_bound_segment(tm: gex_TM_t, rank: gex_Rank_t) -> (*mut c_void, usize) {
     let mut dest_addr = uninit::<*mut c_void>();
     let mut size = uninit::<usize>();
     let event = unsafe {

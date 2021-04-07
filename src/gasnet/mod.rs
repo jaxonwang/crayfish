@@ -1,7 +1,6 @@
 use crate::logging;
 use crate::logging::*;
 use gex_sys::*;
-use libc::size_t;
 use std::os::raw::*;
 use std::ptr::null_mut;
 use std::slice;
@@ -9,13 +8,16 @@ use std::slice;
 extern crate gex_sys;
 extern crate libc;
 
-pub struct CommunicationContext<'a>
-{
+pub struct CommunicationContext<'a> {
     endpoint: gex_EP_t, // thread safe handler
     team: gex_TM_t,
     entry_table: Entrytable,
     cmd_args: Vec<String>,
+
     message_handler: &'a mut MessageHandler<'a>,
+    short_handler_index: gex_AM_Index_t,
+    medium_handler_index: gex_AM_Index_t,
+    long_handler_index: gex_AM_Index_t,
 
     segment_len: usize,
     endpoints_data: Vec<EndpointData>,
@@ -26,34 +28,24 @@ pub struct CommunicationContext<'a>
 
 #[derive(Clone, Debug)]
 struct EndpointData {
-    segment_addr: *const u8,
+    segment_addr: *mut c_void,
     segment_len: usize,
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Place {
+pub struct Rank {
     rank: i32,
 }
 
-impl Place {
-    fn new(rank: i32) -> Self {
-        Place { rank }
+impl Rank {
+    pub fn new(rank: i32) -> Self {
+        Rank { rank }
     }
-    pub fn rank(&self) -> i32 {
+    pub fn int(&self) -> i32 {
         self.rank
     }
-}
-
-pub struct PlaceGroup {
-    size: usize, // TODO further api design
-}
-
-impl PlaceGroup {
-    // pub fn iter(&self) -> placeiter{
-    //     (0..self.size)
-    // }
-    pub fn len(&self) -> usize {
-        self.size
+    fn gex_rank(&self) -> gex_Rank_t {
+        self.rank as gex_Rank_t
     }
 }
 
@@ -67,10 +59,10 @@ extern "C" fn recv_short(token: gex_Token_t, arg0: gasnet_handler_t) {
 
 extern "C" fn recv_medium_long(token: gex_Token_t, buf: *const c_void, nbytes: size_t) {
     let t_info = gex_token_info(token);
-    let src = Place::new(t_info.gex_srcrank as i32);
+    let src = Rank::new(t_info.gex_srcrank as i32);
 
     unsafe {
-        let buf = slice::from_raw_parts(buf as *const u8, nbytes);
+        let buf = slice::from_raw_parts(buf as *const u8, nbytes as usize);
         debug_assert!(
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
             "Context pointer is null"
@@ -79,10 +71,9 @@ extern "C" fn recv_medium_long(token: gex_Token_t, buf: *const c_void, nbytes: s
     }
 }
 
-type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Place, &'b [u8]);
+type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Rank, &'b [u8]);
 
-impl<'a> CommunicationContext<'a>
-{
+impl<'a> CommunicationContext<'a> {
     pub fn new(handler: &'a mut MessageHandler<'a>) -> Self {
         assert!(
             unsafe { GLOBAL_CONTEXT_PTR == COM_CONTEXT_NULL },
@@ -110,9 +101,12 @@ impl<'a> CommunicationContext<'a>
             segment_len: 0,
             max_global_long_request_len: 0,
             max_global_medium_request_len: 0,
+            short_handler_index: tb[0].gex_index,
+            medium_handler_index: tb[1].gex_index,
+            long_handler_index: tb[2].gex_index,
         };
 
-        logging::set_global_id(context.here().rank());
+        logging::set_global_id(context.here().int());
         context
     }
 
@@ -143,7 +137,7 @@ impl<'a> CommunicationContext<'a>
             let (segment_addr, segment_len) =
                 gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
             self.endpoints_data.push(EndpointData {
-                segment_addr: segment_addr as *const u8,
+                segment_addr,
                 segment_len,
             });
         }
@@ -152,28 +146,38 @@ impl<'a> CommunicationContext<'a>
         unsafe {
             // WARN: danger!
             // GLOBAL_CONTEXT_PTR = self as *mut CommunicationContext;
-            GLOBAL_CONTEXT_PTR =
-                std::mem::transmute::<&mut CommunicationContext<'a>, *mut CommunicationContext>(self);
+            GLOBAL_CONTEXT_PTR = std::mem::transmute::<
+                &mut CommunicationContext<'a>,
+                *mut CommunicationContext,
+            >(self);
         }
+    }
+
+    pub fn send(&self, dst: Rank, message: &[u8]) {
+        gex_am_reqeust_long0(
+            self.team,
+            dst.gex_rank(),
+            self.long_handler_index,
+            message.as_ptr() as *const c_void,
+            message.len() as size_t,
+            self.endpoints_data[dst.int() as usize].segment_addr,
+        );
     }
 
     pub fn cmd_args(&self) -> &[String] {
         &self.cmd_args[..]
     }
 
-    pub fn here(&self) -> Place {
-        Place::new(gax_system_query_jobrank() as i32)
+    pub fn here(&self) -> Rank {
+        Rank::new(gax_system_query_jobrank() as i32)
     }
 
-    pub fn world(&self) -> PlaceGroup {
-        PlaceGroup {
-            size: gax_system_query_jobsize() as usize,
-        }
+    pub fn world_size(&self) -> usize {
+        gax_system_query_jobsize() as usize
     }
 }
 
-impl<'a> Drop for CommunicationContext<'a>
-{
+impl<'a> Drop for CommunicationContext<'a> {
     fn drop(&mut self) {
         unsafe {
             debug_assert!(GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL);
