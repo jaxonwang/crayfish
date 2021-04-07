@@ -141,3 +141,4 @@ int gex_AM_RequestLong_Wrap3( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handl
 int gex_AM_RequestShort_Wrap4(gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);
 int gex_AM_RequestMedium_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);
 int gex_AM_RequestLong_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3);
+int gex_AM_ReplyShort_Wrap0(gex_Token_t token, gex_AM_Index_t index, gex_Flags_t flags);

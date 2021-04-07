@@ -97,9 +97,9 @@ pub struct Entrytable {
     entries: Vec<gex_AM_Entry_t>,
 }
 
-impl <I: std::slice::SliceIndex<[gex_AM_Entry_t]>> std::ops::Index<I> for Entrytable{
+impl<I: std::slice::SliceIndex<[gex_AM_Entry_t]>> std::ops::Index<I> for Entrytable {
     type Output = I::Output;
-    fn index(&self, index: I) -> &Self::Output{
+    fn index(&self, index: I) -> &Self::Output {
         &self.entries[index]
     }
 }
@@ -141,6 +141,10 @@ impl Entrytable {
 
     pub fn add_long_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
         self.add(f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST, nargs, name);
+    }
+
+    pub fn add_short_reply(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+        self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REPLY, nargs, name);
     }
 }
 
@@ -263,6 +267,7 @@ pub fn gex_am_reqeust_medium0(
     handler: gex_AM_Index_t,
     source_addr: *const ::std::os::raw::c_void,
     nbytes: size_t,
+    lc_opt: *mut gex_Event_t,
 ) {
     unsafe {
         assert_gasnet_ok(gex_AM_RequestMedium_Wrap0(
@@ -271,7 +276,7 @@ pub fn gex_am_reqeust_medium0(
             handler,
             source_addr,
             nbytes,
-            gex_event_now(),
+            lc_opt,
             0,
         ));
     }
@@ -284,6 +289,8 @@ pub fn gex_am_reqeust_long0(
     source_addr: *const ::std::os::raw::c_void,
     nbytes: size_t,
     dest_addr: *mut ::std::os::raw::c_void,
+    dest_offset: isize,
+    lc_opt: *mut gex_Event_t,
 ) {
     unsafe {
         assert_gasnet_ok(gex_AM_RequestLong_Wrap0(
@@ -292,9 +299,54 @@ pub fn gex_am_reqeust_long0(
             handler,
             source_addr,
             nbytes,
-            dest_addr,
-            gex_event_now(),
+            dest_addr.offset(dest_offset),
+            lc_opt,
             0,
         ));
+    }
+}
+
+pub fn gex_am_reqeust_long4(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    dest_addr: *mut ::std::os::raw::c_void,
+    dest_offset: isize,
+    lc_opt: *mut gex_Event_t,
+    arg0: gasnet_handlerarg_t,
+    arg1: gasnet_handlerarg_t,
+    arg2: gasnet_handlerarg_t,
+    arg3: gasnet_handlerarg_t,
+) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_RequestLong_Wrap4(
+            tm,
+            rank,
+            handler,
+            source_addr,
+            nbytes,
+            dest_addr.offset(dest_offset),
+            lc_opt,
+            0,
+            arg0,
+            arg1,
+            arg2,
+            arg3,
+        ));
+    }
+}
+
+pub fn gex_am_reply_short0(token: gex_Token_t, handler: gex_AM_Index_t) {
+    unsafe {
+        assert_gasnet_ok(gex_AM_ReplyShort_Wrap0(token, handler, 0));
+    }
+}
+
+pub fn gex_nbi_wait_am_lc() {
+    // wait am local complete
+    unsafe{
+        gex_NBI_Wait_Wrap(gex_ec_am(), 0);
     }
 }

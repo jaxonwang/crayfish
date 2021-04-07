@@ -157,3 +157,5 @@ int gex_AM_RequestMedium_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t han
 { return gex_AM_RequestMedium4 (tm, rank, handler, (void *)source_addr, nbytes, lc_opt, flags , arg0 , arg1 , arg2 , arg3); }
 int gex_AM_RequestLong_Wrap4( gex_TM_t tm, gex_Rank_t rank, gex_AM_Index_t handler, const void *source_addr, size_t nbytes, void *dest_addr, gex_Event_t *lc_opt, gex_Flags_t flags , gex_AM_Arg_t arg0 , gex_AM_Arg_t arg1 , gex_AM_Arg_t arg2 , gex_AM_Arg_t arg3)
 { return gex_AM_RequestLong4 (tm, rank, handler, (void *)source_addr, nbytes, dest_addr, lc_opt, flags , arg0 , arg1 , arg2 , arg3); }
+int gex_AM_ReplyShort_Wrap0(gex_Token_t token, gex_AM_Index_t index, gex_Flags_t flags)
+{ return gex_AM_ReplyShort0(token, index, flags); }
