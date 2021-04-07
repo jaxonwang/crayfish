@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
-#![allow(safe_packed_borrows)] // TODO: remove this when bindgen fix it
+#![allow(unaligned_references)] // TODO: remove this when bindgen fix it
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -206,10 +206,28 @@ pub fn gex_am_max_global_request_long(tm: gex_TM_t) -> usize {
     size.try_into().unwrap()
 }
 
+pub fn gex_am_max_request_long(tm: gex_TM_t, rank: gex_Rank_t) -> usize {
+    let size;
+    unsafe {
+        size = gex_AM_MaxRequestLong_Wrap(tm, rank, gex_event_now(), 0, MAX_ARGS_USED);
+    }
+    assert! {size!=0, "size is 0"};
+    size.try_into().unwrap()
+}
+
 pub fn gex_am_max_global_request_medium(tm: gex_TM_t) -> usize {
     let size;
     unsafe {
         let rank = gex_rank_invalid(); // use invalid rank to query global
+        size = gex_AM_MaxRequestMedium_Wrap(tm, rank, gex_event_now(), 0, MAX_ARGS_USED);
+    }
+    assert! {size!=0, "size is 0"};
+    size.try_into().unwrap()
+}
+
+pub fn gex_am_max_request_medium(tm: gex_TM_t, rank: gex_Rank_t) -> usize {
+    let size;
+    unsafe {
         size = gex_AM_MaxRequestMedium_Wrap(tm, rank, gex_event_now(), 0, MAX_ARGS_USED);
     }
     assert! {size!=0, "size is 0"};

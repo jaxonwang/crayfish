@@ -2,21 +2,20 @@ use crate::logging;
 use crate::logging::*;
 use gex_sys::*;
 use libc::size_t;
-use std::boxed::Box;
 use std::os::raw::*;
-use std::ptr::null;
 use std::ptr::null_mut;
 use std::slice;
 
 extern crate gex_sys;
 extern crate libc;
 
-pub struct CommunicationContext {
+pub struct CommunicationContext<'a>
+{
     endpoint: gex_EP_t, // thread safe handler
     team: gex_TM_t,
     entry_table: Entrytable,
     cmd_args: Vec<String>,
-    message_handler: Box<MessageHandler>,
+    message_handler: &'a mut MessageHandler<'a>,
 
     segment_len: usize,
     endpoints_data: Vec<EndpointData>,
@@ -80,12 +79,13 @@ extern "C" fn recv_medium_long(token: gex_Token_t, buf: *const c_void, nbytes: s
     }
 }
 
-type MessageHandler = dyn for<'a> FnMut(Place, &'a[u8]);
+type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Place, &'b [u8]);
 
-impl CommunicationContext {
-    pub fn new(handler: Box<MessageHandler>) -> Box<Self> {
+impl<'a> CommunicationContext<'a>
+{
+    pub fn new(handler: &'a mut MessageHandler<'a>) -> Self {
         assert!(
-            unsafe{GLOBAL_CONTEXT_PTR == COM_CONTEXT_NULL},
+            unsafe { GLOBAL_CONTEXT_PTR == COM_CONTEXT_NULL },
             "Should only one instance!"
         );
 
@@ -100,7 +100,7 @@ impl CommunicationContext {
         // register the table
         gex_register_entries(ep, &mut tb);
 
-        let mut context = Box::new(CommunicationContext {
+        let context = CommunicationContext {
             endpoint: ep,
             team: tm,
             endpoints_data: vec![],
@@ -110,13 +110,7 @@ impl CommunicationContext {
             segment_len: 0,
             max_global_long_request_len: 0,
             max_global_medium_request_len: 0,
-        });
-
-        // set proper ptr
-        let context_borrow: &mut CommunicationContext = context.as_mut();
-        unsafe { // WARN: danger!
-            GLOBAL_CONTEXT_PTR = context_borrow as *mut CommunicationContext;
-        }
+        };
 
         logging::set_global_id(context.here().rank());
         context
@@ -146,13 +140,21 @@ impl CommunicationContext {
         // set endpoint addr offset
         let world_size = gax_system_query_jobsize();
         for i in 0..world_size {
-            let (segment_addr, segment_len) = gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
+            let (segment_addr, segment_len) =
+                gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
             self.endpoints_data.push(EndpointData {
-                segment_addr:segment_addr as *const u8,
+                segment_addr: segment_addr as *const u8,
                 segment_len,
             });
         }
         debug!("Endpoint data: {:?}", self.endpoints_data);
+        // set proper ptr
+        unsafe {
+            // WARN: danger!
+            // GLOBAL_CONTEXT_PTR = self as *mut CommunicationContext;
+            GLOBAL_CONTEXT_PTR =
+                std::mem::transmute::<&mut CommunicationContext<'a>, *mut CommunicationContext>(self);
+        }
     }
 
     pub fn cmd_args(&self) -> &[String] {
@@ -170,10 +172,11 @@ impl CommunicationContext {
     }
 }
 
-impl Drop for CommunicationContext {
+impl<'a> Drop for CommunicationContext<'a>
+{
     fn drop(&mut self) {
-        debug_assert!(unsafe{GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL});
         unsafe {
+            debug_assert!(GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL);
             GLOBAL_CONTEXT_PTR = COM_CONTEXT_NULL;
         }
     }

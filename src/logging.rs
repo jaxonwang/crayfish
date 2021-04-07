@@ -3,10 +3,11 @@ extern crate log;
 
 use crate::meta_data;
 
-use std::thread;
-use std::string::String;
+use fern::colors::{Color, ColoredLevelConfig};
 use std::env;
+use std::string::String;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::thread;
 
 pub use log::{debug, error, info, trace, warn};
 
@@ -17,17 +18,18 @@ pub fn set_global_id(id: i32) {
 }
 
 pub fn setup_logger() -> Result<(), fern::InitError> {
+    let mut colors = ColoredLevelConfig::new().info(Color::Green).debug(Color::White);
 
     let mut pkg_name_upper = String::from(meta_data::PKG_NAME);
     pkg_name_upper.make_ascii_uppercase();
     let pkg_name_upper = pkg_name_upper.replace("-", "_");
     let log_level_env_name = format!("{}_LOG_LEVEL", &pkg_name_upper);
-    let env_value = match env::var(&log_level_env_name){
+    let env_value = match env::var(&log_level_env_name) {
         Ok(v) => v,
         Err(_) => "".to_string(),
     };
 
-    let debug_level = match env_value.as_str(){
+    let debug_level = match env_value.as_str() {
         "trace" => log::LevelFilter::Trace,
         "debug" => log::LevelFilter::Debug,
         "info" => log::LevelFilter::Info,
@@ -39,13 +41,20 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "{} {} {}:{:?} {} {}",
-                chrono::Local::now().format("%m-%d %H:%M:%S.%f"),
-                record.target(),
-                GLOBAL_ID.load(Ordering::Relaxed),
-                thread::current().id(),
-                record.level(),
-                message
+                "{date} {file}:{line} {pid}:{tid:?} {level} {message}",
+                date = chrono::Local::now().format("%H:%M:%S.%6f"),
+                file = match record.file() {
+                    Some(s) => s,
+                    None => "unknown",
+                },
+                line = match record.line() {
+                    Some(s) => s,
+                    None => 0,
+                },
+                pid = GLOBAL_ID.load(Ordering::Relaxed),
+                tid = thread::current().id(),
+                level = colors.color(record.level()),
+                message = message
             ))
         })
         .level(debug_level)
