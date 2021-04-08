@@ -10,16 +10,16 @@ extern crate rust_apgas;
 pub fn main() {
     let a = "hello world!";
     let mut callback = |src: network::Rank, buf: &[u8]| {
-        info!("{} from:{} {}", src.int(), String::from_utf8_lossy(buf), a);
+        info!("{} from:{} {}", src.as_i32(), String::from_utf8_lossy(buf), a);
     };
-    logging::setup_logger();
+    logging::setup_logger().unwrap();
     let mut context = network::CommunicationContext::new(&mut callback);
     context.run();
     let sender = context.single_sender();
     let context = context;
 
     let here = context.here();
-    let my_rank = here.int();
+    let my_rank = here.as_i32();
     let world = context.world_size();
 
     thread::spawn(move || {

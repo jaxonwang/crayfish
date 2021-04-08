@@ -53,11 +53,17 @@ impl Rank {
     pub fn new(rank: i32) -> Self {
         Rank { rank }
     }
-    pub fn int(&self) -> i32 {
+    pub fn as_i32(&self) -> i32 {
         self.rank
     }
+    pub fn as_usize(&self) -> usize {
+        self.rank.try_into().unwrap()
+    }
     fn gex_rank(&self) -> gex_Rank_t {
-        self.rank as gex_Rank_t
+        self.rank.try_into().unwrap()
+    }
+    fn from_gex_rank(rank: gex_Rank_t) -> Self {
+        Self::new(rank.try_into().unwrap())
     }
 }
 
@@ -89,10 +95,10 @@ extern "C" fn recv_short(token: gex_Token_t, arg0: gasnet_handlerarg_t) {
 
 extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t) {
     let t_info = gex_token_info(token);
-    let src = Rank::new(t_info.gex_srcrank as i32);
+    let src = Rank::from_gex_rank(t_info.gex_srcrank);
 
     unsafe {
-        let buf = slice::from_raw_parts(buf as *const u8, nbytes as usize);
+        let buf = slice::from_raw_parts(buf as *const u8, nbytes.try_into().unwrap());
         debug_assert!(
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
             "Context pointer is null"
@@ -101,7 +107,7 @@ extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t
     }
 }
 
-extern "C" fn recv_long(
+fn _recv_long<const TEST_ON: usize>(
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
@@ -110,14 +116,21 @@ extern "C" fn recv_long(
     c: gasnet_handlerarg_t,
     d: gasnet_handlerarg_t,
 ) {
-    let t_info = gex_token_info(token);
-    let src = Rank::new(t_info.gex_srcrank as i32);
+    let src = if TEST_ON == 0 {
+        let t_info = gex_token_info(token);
+        Rank::from_gex_rank(t_info.gex_srcrank)
+    } else {
+        Rank::new(0)
+    };
     let (message_len, offset) = i32_4_to_u64_2(a, b, c, d);
+    let message_len: usize = message_len.try_into().unwrap();
+    let offset: usize = offset.try_into().unwrap();
+    let nbytes: usize = nbytes.try_into().unwrap();
 
     let call_handler = || unsafe {
         let buf = slice::from_raw_parts(
-            buf.offset(-(offset as isize)) as *const u8,
-            message_len as usize,
+            buf.offset(-(TryInto::<isize>::try_into(offset).unwrap())) as *const u8,
+            message_len,
         );
         debug_assert!(
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
@@ -134,23 +147,25 @@ extern "C" fn recv_long(
     }
     // now message is fragmented
     let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
-    let (ref mut expecting, ref mut heap) = context.message_framgment_checker[src.int() as usize];
-    heap.push(std::cmp::Reverse(offset as usize));
+    let (ref mut expecting, ref mut heap) = context.message_framgment_checker[src.as_usize()];
+    heap.push(std::cmp::Reverse(offset));
     loop {
         // pop until mistach or empty
         match heap.peek() {
             None => break,
             Some(Reverse(v)) if *v == *expecting => {
-                *expecting += nbytes as usize;
+                *expecting += context.max_global_long_request_len;
                 heap.pop();
             }
             _ => break,
         }
     }
-    if *expecting == message_len as usize {
+    if *expecting >= message_len {
         debug_assert!(heap.len() == 0);
         *expecting = 0;
-        gex_am_reply_short0(token, context.message_recv_reply_index); // reply earlier
+        if TEST_ON == 0 {
+            gex_am_reply_short0(token, context.message_recv_reply_index); // reply earlier
+        }
         call_handler();
     }
 }
@@ -170,6 +185,17 @@ extern "C" fn message_recv_reply(token: gex_Token_t) {
     }
 }
 
+extern "C" fn recv_long(
+    token: gex_Token_t,
+    buf: *const c_void,
+    nbytes: size_t,
+    a: gasnet_handlerarg_t,
+    b: gasnet_handlerarg_t,
+    c: gasnet_handlerarg_t,
+    d: gasnet_handlerarg_t,
+) {
+    _recv_long::<0>(token, buf, nbytes, a, b, c, d);
+}
 type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Rank, &'b [u8]);
 
 impl<'a> CommunicationContext<'a> {
@@ -209,13 +235,13 @@ impl<'a> CommunicationContext<'a> {
             medium_handler_index: tb[1].gex_index,
             long_handler_index: tb[2].gex_index,
             message_recv_reply_index: tb[3].gex_index,
-            local_rank: Rank::new(gax_system_query_jobrank() as i32),
+            local_rank: Rank::from_gex_rank(gax_system_query_jobrank()),
             world_size: gax_system_query_jobsize() as usize,
             notifiers: vec![],
             message_framgment_checker: vec![],
         };
 
-        logging::set_global_id(context.here().int());
+        logging::set_global_id(context.here().as_i32());
         context
     }
 
@@ -266,7 +292,11 @@ impl<'a> CommunicationContext<'a> {
             assert_eq!(segment_len, self.segment_len);
             self.endpoints_data.push(EndpointData {
                 segment_addr: unsafe {
-                    segment_addr.offset(self.local_rank.int() as isize * chunk_size as isize)
+                    segment_addr.offset(
+                        (self.local_rank.as_usize() * chunk_size)
+                            .try_into()
+                            .unwrap(),
+                    )
                 },
                 segment_len: chunk_size,
             });
@@ -342,8 +372,7 @@ pub struct SingleSender {
 }
 
 // team is pointer, not send but we know it's ok to share team
-unsafe impl Send for SingleSender{} 
-
+unsafe impl Send for SingleSender {}
 
 impl SingleSender {
     pub fn send(&self, dst: Rank, message: &[u8]) {
@@ -358,7 +387,7 @@ impl SingleSender {
                 unsafe { gex_event_now() }, // block
             );
         } else {
-            let chunk_size = self.endpoints_data[dst.int() as usize].segment_len;
+            let chunk_size = self.endpoints_data[dst.as_usize()].segment_len;
             assert!(
                 // TODO: support larger message
                 message.len() < chunk_size,
@@ -367,7 +396,7 @@ impl SingleSender {
                 chunk_size
             );
 
-            let dst_index = dst.int() as usize;
+            let dst_index = dst.as_usize();
             let mut wait_ref = self.sync_data[dst_index].waiting_reply.borrow_mut();
             if *wait_ref {
                 // block on channel
@@ -392,7 +421,7 @@ impl SingleSender {
                     self.long_handler_index,
                     send_slice.as_ptr() as *const c_void,
                     send_size as size_t,
-                    self.endpoints_data[dst.int() as usize].segment_addr,
+                    self.endpoints_data[dst.as_usize()].segment_addr,
                     offset.try_into().unwrap(),
                     unsafe { gex_event_group() }, // non block
                     a,
@@ -412,6 +441,88 @@ impl<'a> Drop for CommunicationContext<'a> {
         unsafe {
             debug_assert!(GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL);
             GLOBAL_CONTEXT_PTR = COM_CONTEXT_NULL;
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+    use std::ptr::null;
+    use std::sync::atomic;
+    use std::sync::atomic::Ordering;
+    use rand::prelude::*;
+
+
+    fn fake_context<'a>(f: &'a mut MessageHandler) -> CommunicationContext<'a> {
+        CommunicationContext {
+            endpoint: null::<*const ()>() as gex_EP_t,
+            team: null::<*const ()>() as gex_TM_t,
+            endpoints_data: vec![],
+            entry_table: Entrytable::new(),
+            cmd_args: vec![],
+            message_handler: f,
+            segment_len: 0,
+            max_global_long_request_len: 1024,
+            max_global_medium_request_len: 512,
+            short_handler_index: 0,
+            medium_handler_index: 0,
+            long_handler_index: 0,
+            message_recv_reply_index: 0,
+            local_rank: Rank::new(0),
+            world_size: 0,
+            notifiers: vec![],
+            message_framgment_checker: vec![(0, BinaryHeap::new())],
+        }
+    }
+    fn set_ptr(ctx: &mut CommunicationContext) {
+        unsafe {
+            GLOBAL_CONTEXT_PTR =
+                std::mem::transmute::<&mut CommunicationContext, *mut CommunicationContext>(ctx)
+        }
+    }
+
+    #[test]
+    fn test_long_receiver() {
+        let called = atomic::AtomicBool::new(false);
+        let mut callback = |_a: Rank, _b: &[u8]| {
+            called.store(true, Ordering::Relaxed);
+        };
+        let mut ctx = fake_context(&mut callback);
+        set_ptr(&mut ctx);
+
+        let message_len = 102400usize;
+        let step = 1024;
+        let mem_ptr: *const c_void = unsafe { null::<c_void>().offset(0x12345678) };
+        let mut calls = vec![];
+        let mut offset: usize = 0;
+        while offset < message_len {
+            let (a, b, c, d) = u64_2_to_i32_4(message_len as u64, offset as u64);
+            let buf = unsafe { mem_ptr.offset(offset as isize) };
+            let nbytes = usize::min(message_len - offset, step) as size_t;
+            calls.push((buf, nbytes, a, b, c, d));
+            offset += nbytes as usize;
+        }
+        type MESSAGE_ORDER = Vec<(*const c_void, size_t, i32, i32, i32, i32)>;
+
+        let test_message_order = |calls: &MESSAGE_ORDER| {
+            called.store(false, Ordering::Relaxed);
+            for (buf, nbytes, a, b, c, d) in calls.clone().into_iter().take(calls.len() - 1) {
+                _recv_long::<1>(null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d);
+                assert_eq! {called.load(Ordering::Relaxed), false};
+            }
+            let (buf, nbytes, a, b, c, d) = calls[calls.len() - 1].clone();
+            _recv_long::<1>(null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d);
+            assert_eq! {called.load(Ordering::Relaxed), true};
+        };
+        test_message_order(&calls);
+        let reversed :MESSAGE_ORDER = calls.iter().rev().cloned().collect();
+        test_message_order(&reversed);
+        let mut rng = rand::thread_rng();
+        for i in 0..4000{
+            calls.shuffle(&mut rng);
+            test_message_order(&calls);
         }
     }
 }
