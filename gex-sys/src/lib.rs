@@ -350,3 +350,9 @@ pub fn gex_nbi_wait_am_lc() {
         gex_NBI_Wait_Wrap(gex_ec_am(), 0);
     }
 }
+
+pub fn gex_coll_barrier_nb(tm:gex_TM_t) -> gex_Event_t{
+    unsafe{
+        gex_Coll_BarrierNB_Wrap(tm, 0)
+    }
+}

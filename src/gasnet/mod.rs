@@ -1,6 +1,7 @@
 use crate::logging;
 use crate::logging::*;
 use gex_sys::*;
+use std::fmt;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -66,6 +67,11 @@ impl Rank {
         Self::new(rank.try_into().unwrap())
     }
 }
+impl fmt::Display for Rank{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rank)
+    }
+}
 
 union B128 {
     u64_2: (u64, u64),
@@ -96,6 +102,7 @@ extern "C" fn recv_short(token: gex_Token_t, arg0: gasnet_handlerarg_t) {
 extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t) {
     let t_info = gex_token_info(token);
     let src = Rank::from_gex_rank(t_info.gex_srcrank);
+    // trace!("medium recv {} bytes from {} at mem {:?}", nbytes, src, buf);
 
     unsafe {
         let buf = slice::from_raw_parts(buf as *const u8, nbytes.try_into().unwrap());
@@ -107,7 +114,7 @@ extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t
     }
 }
 
-fn _recv_long<const TEST_ON: usize>(
+fn _recv_long<const TEST_ON: usize>(  // TODO: change TEST_ON to a type
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
@@ -126,6 +133,8 @@ fn _recv_long<const TEST_ON: usize>(
     let message_len: usize = message_len.try_into().unwrap();
     let offset: usize = offset.try_into().unwrap();
     let nbytes: usize = nbytes.try_into().unwrap();
+
+    // trace!("long recv {} bytes from {} at mem {:?}", nbytes, src, buf);
 
     let call_handler = || unsafe {
         let buf = slice::from_raw_parts(
@@ -410,9 +419,9 @@ impl SingleSender {
             let packet_size = self.max_global_long_request_len;
             *wait_ref = message.len() > packet_size;
 
-            let (a, b, c, d) = u64_2_to_i32_4(message.len() as u64, offset as u64);
 
             while offset < message.len() {
+                let (a, b, c, d) = u64_2_to_i32_4(message.len() as u64, offset as u64);
                 let send_slice = &message[offset..];
                 let send_size = usize::min(send_slice.len(), packet_size);
                 gex_am_reqeust_long4(
@@ -429,10 +438,16 @@ impl SingleSender {
                     c,
                     d,
                 );
+                // trace!("send offset {} bytes {}", offset, send_size);
                 offset += send_size;
             }
             gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
         }
+    }
+
+    pub fn barrier(&self) {// only support global barrier now
+        let event = gex_coll_barrier_nb(self.team);
+        gex_event_wait(event);
     }
 }
 
@@ -449,11 +464,10 @@ impl<'a> Drop for CommunicationContext<'a> {
 mod test {
 
     use super::*;
+    use rand::prelude::*;
     use std::ptr::null;
     use std::sync::atomic;
     use std::sync::atomic::Ordering;
-    use rand::prelude::*;
-
 
     fn fake_context<'a>(f: &'a mut MessageHandler) -> CommunicationContext<'a> {
         CommunicationContext {
@@ -517,10 +531,10 @@ mod test {
             assert_eq! {called.load(Ordering::Relaxed), true};
         };
         test_message_order(&calls);
-        let reversed :MESSAGE_ORDER = calls.iter().rev().cloned().collect();
+        let reversed: MESSAGE_ORDER = calls.iter().rev().cloned().collect();
         test_message_order(&reversed);
         let mut rng = rand::thread_rng();
-        for i in 0..4000{
+        for i in 0..4000 {
             calls.shuffle(&mut rng);
             test_message_order(&calls);
         }

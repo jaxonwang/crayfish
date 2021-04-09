@@ -17,6 +17,7 @@ serde = { version = "1.0", features = ["derive"] }
 gex-sys = { path = "gex-sys", version = "0.1.0"}
 lazy_static = "1.4.0"
 libc = "0.2.93"
+signal-hook = "0.3.8"
 
 [dependencies.async-std]
 version = "1.7.0"
