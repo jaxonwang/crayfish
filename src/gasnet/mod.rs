@@ -298,7 +298,7 @@ impl<'a> CommunicationContext<'a> {
         for i in 0..self.world_size {
             let (segment_addr, segment_len) =
                 gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
-            assert_eq!(segment_len, self.segment_len);
+            // assert_eq!(segment_len, self.segment_len); TODO: different machine.
             self.endpoints_data.push(EndpointData {
                 segment_addr: unsafe {
                     segment_addr.offset(
@@ -409,9 +409,13 @@ impl SingleSender {
             let mut wait_ref = self.sync_data[dst_index].waiting_reply.borrow_mut();
             if *wait_ref {
                 // block on channel
-                match self.sync_data[dst_index].notifiee.recv() {
-                    Err(_) => panic! {"should never disconnect when I am waiting a reply"},
-                    Ok(_) => (), // ok
+                use mpsc::TryRecvError;
+                loop {
+                    match self.sync_data[dst_index].notifiee.try_recv() { // TODO: spin here need to rewrite.
+                        Err(TryRecvError::Disconnected) => panic! {"should never disconnect when I am waiting a reply"},
+                        Err(TryRecvError::Empty) => break,
+                        Ok(_) => (), // ok
+                    }
                 }
             }
 
