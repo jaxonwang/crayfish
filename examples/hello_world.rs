@@ -1,17 +1,14 @@
+use crossbeam;
+use log;
 use rust_apgas::logging;
 use rust_apgas::logging::*;
 use rust_apgas::network;
+use signal_hook::consts::signal;
 use std::cell::Cell;
 use std::sync::atomic;
 use std::sync::Arc;
-use std::process;
-
-use crossbeam;
-use log;
 use std::thread;
 use std::time;
-use signal_hook::consts::signal;
-use signal_hook::iterator;
 
 extern crate rust_apgas;
 extern crate signal_hook;
@@ -20,7 +17,6 @@ pub fn main() {
     // signal handling
     let got = Arc::new(atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal::SIGQUIT, Arc::clone(&got)).unwrap();
-
 
     let payload_len = 10000000usize;
     let payload: Vec<u8> = (0..payload_len).map(|a| (a % 256) as u8).collect();
@@ -45,9 +41,6 @@ pub fn main() {
 
     let here = context.here();
     let world = context.world_size();
-    if here.as_i32() == 3{
-        process::exit(1);
-    }
 
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
@@ -67,11 +60,11 @@ pub fn main() {
         });
 
         let sleep_itval = time::Duration::from_millis(100);
-        while !should_terminate.get() && ! got.load(atomic::Ordering::Relaxed){
+        while !should_terminate.get() && !got.load(atomic::Ordering::Relaxed) {
             thread::sleep(sleep_itval);
         }
         if got.load(atomic::Ordering::Relaxed) {
-            error!("Terminate on signal or detect an unaccessible peer.")
+            error!("Terminate on signal")
         }
     })
     .unwrap();
