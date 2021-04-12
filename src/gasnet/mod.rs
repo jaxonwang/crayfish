@@ -458,7 +458,6 @@ impl SingleSender {
 impl<'a> Drop for CommunicationContext<'a> {
     fn drop(&mut self) {
         unsafe {
-            debug_assert!(GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL);
             GLOBAL_CONTEXT_PTR = COM_CONTEXT_NULL;
         }
     }
