@@ -43,14 +43,8 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
             out.finish(format_args!(
                 "{date} {file}:{line} {pid}:{tid:?} {level} {message}",
                 date = chrono::Local::now().format("%H:%M:%S.%6f"),
-                file = match record.file() {
-                    Some(s) => s,
-                    None => "unknown",
-                },
-                line = match record.line() {
-                    Some(s) => s,
-                    None => 0,
-                },
+                file = record.file().unwrap_or("unknown"),
+                line = record.line().unwrap_or(0),
                 pid = GLOBAL_ID.load(Ordering::Relaxed),
                 tid = thread::current().id(),
                 level = colors.color(record.level()),

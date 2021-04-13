@@ -1,11 +1,11 @@
 use crate::logging;
 use crate::logging::*;
 use gex_sys::*;
-use std::fmt;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
+use std::fmt;
 use std::os::raw::*;
 use std::ptr::null_mut;
 use std::slice;
@@ -67,7 +67,7 @@ impl Rank {
         Self::new(rank.try_into().unwrap())
     }
 }
-impl fmt::Display for Rank{
+impl fmt::Display for Rank {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.rank)
     }
@@ -114,7 +114,8 @@ extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t
     }
 }
 
-fn _recv_long<const TEST_ON: usize>(  // TODO: change TEST_ON to a type
+fn _recv_long<const TEST_ON: usize>(
+    // TODO: change TEST_ON to a type
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
@@ -162,7 +163,7 @@ fn _recv_long<const TEST_ON: usize>(  // TODO: change TEST_ON to a type
         // pop until mistach or empty
         match heap.peek() {
             None => break,
-            Some(Reverse(v)) if *v == *expecting => {
+            Some(Reverse(minimal)) if *minimal == *expecting => {
                 *expecting += context.max_global_long_request_len;
                 heap.pop();
             }
@@ -170,7 +171,7 @@ fn _recv_long<const TEST_ON: usize>(  // TODO: change TEST_ON to a type
         }
     }
     if *expecting >= message_len {
-        debug_assert!(heap.len() == 0);
+        debug_assert!(heap.is_empty());
         *expecting = 0;
         if TEST_ON == 0 {
             gex_am_reply_short0(token, context.message_recv_reply_index); // reply earlier
@@ -218,14 +219,16 @@ impl<'a> CommunicationContext<'a> {
 
         // prepare entry table
         let mut tb = Entrytable::new();
-        tb.add_short_req(recv_short as *const (), 1, Some("justaname"));
-        tb.add_medium_req(recv_medium as *const (), 0, Some("recv_medium"));
-        tb.add_long_req(recv_long as *const (), 4, Some("recv_long"));
-        tb.add_short_reply(
-            message_recv_reply as *const (),
-            0,
-            Some("message_recv_reply"),
-        );
+        unsafe {
+            tb.add_short_req(recv_short as *const (), 1, Some("justaname"));
+            tb.add_medium_req(recv_medium as *const (), 0, Some("recv_medium"));
+            tb.add_long_req(recv_long as *const (), 4, Some("recv_long"));
+            tb.add_short_reply(
+                message_recv_reply as *const (),
+                0,
+                Some("message_recv_reply"),
+            );
+        }
 
         // register the table
         gex_register_entries(ep, &mut tb);
@@ -296,7 +299,7 @@ impl<'a> CommunicationContext<'a> {
 
         // set endpoint addr offset
         for i in 0..self.world_size {
-            let (segment_addr, segment_len) =
+            let (segment_addr, _segment_len) =
                 gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
             // assert_eq!(segment_len, self.segment_len); TODO: different machine.
             self.endpoints_data.push(EndpointData {
@@ -339,7 +342,7 @@ impl<'a> CommunicationContext<'a> {
         }
 
         SingleSender {
-            team: self.team.clone(),
+            team: self.team,
             endpoints_data: self.endpoints_data.clone(),
             sync_data,
             max_global_long_request_len: self.max_global_long_request_len,
@@ -387,14 +390,16 @@ impl SingleSender {
     pub fn send(&self, dst: Rank, message: &[u8]) {
         // NOTE: not thread safe!
         if message.len() < self.max_global_medium_request_len {
-            gex_am_reqeust_medium0(
-                self.team,
-                dst.gex_rank(),
-                self.medium_handler_index,
-                message.as_ptr() as *const c_void,
-                message.len() as size_t,
-                unsafe { gex_event_now() }, // block
-            );
+            unsafe {
+                gex_am_reqeust_medium0(
+                    self.team,
+                    dst.gex_rank(),
+                    self.medium_handler_index,
+                    message.as_ptr() as *const c_void,
+                    message.len() as size_t,
+                    gex_event_now(), // block
+                )
+            };
         } else {
             let chunk_size = self.endpoints_data[dst.as_usize()].segment_len;
             assert!(
@@ -411,8 +416,11 @@ impl SingleSender {
                 // block on channel
                 use mpsc::TryRecvError;
                 loop {
-                    match self.sync_data[dst_index].notifiee.try_recv() { // TODO: spin here need to rewrite.
-                        Err(TryRecvError::Disconnected) => panic! {"should never disconnect when I am waiting a reply"},
+                    match self.sync_data[dst_index].notifiee.try_recv() {
+                        // TODO: spin here need to rewrite.
+                        Err(TryRecvError::Disconnected) => {
+                            panic! {"should never disconnect when I am waiting a reply"}
+                        }
                         Err(TryRecvError::Empty) => break,
                         Ok(_) => (), // ok
                     }
@@ -423,25 +431,26 @@ impl SingleSender {
             let packet_size = self.max_global_long_request_len;
             *wait_ref = message.len() > packet_size;
 
-
             while offset < message.len() {
                 let (a, b, c, d) = u64_2_to_i32_4(message.len() as u64, offset as u64);
                 let send_slice = &message[offset..];
                 let send_size = usize::min(send_slice.len(), packet_size);
-                gex_am_reqeust_long4(
-                    self.team,
-                    dst.gex_rank(),
-                    self.long_handler_index,
-                    send_slice.as_ptr() as *const c_void,
-                    send_size as size_t,
-                    self.endpoints_data[dst.as_usize()].segment_addr,
-                    offset.try_into().unwrap(),
-                    unsafe { gex_event_group() }, // non block
-                    a,
-                    b,
-                    c,
-                    d,
-                );
+                unsafe {
+                    gex_am_reqeust_long4(
+                        self.team,
+                        dst.gex_rank(),
+                        self.long_handler_index,
+                        send_slice.as_ptr() as *const c_void,
+                        send_size as size_t,
+                        self.endpoints_data[dst.as_usize()].segment_addr,
+                        offset.try_into().unwrap(),
+                        gex_event_group(), // non block
+                        a,
+                        b,
+                        c,
+                        d,
+                    )
+                };
                 // trace!("send offset {} bytes {}", offset, send_size);
                 offset += send_size;
             }
@@ -449,7 +458,8 @@ impl SingleSender {
         }
     }
 
-    pub fn barrier(&self) {// only support global barrier now
+    pub fn barrier(&self) {
+        // only support global barrier now
         let event = gex_coll_barrier_nb(self.team);
         gex_event_wait(event);
     }
@@ -521,9 +531,9 @@ mod test {
             calls.push((buf, nbytes, a, b, c, d));
             offset += nbytes as usize;
         }
-        type MESSAGE_ORDER = Vec<(*const c_void, size_t, i32, i32, i32, i32)>;
+        type MessageOrder = Vec<(*const c_void, size_t, i32, i32, i32, i32)>;
 
-        let test_message_order = |calls: &MESSAGE_ORDER| {
+        let test_message_order = |calls: &MessageOrder| {
             called.store(false, Ordering::Relaxed);
             for (buf, nbytes, a, b, c, d) in calls.clone().into_iter().take(calls.len() - 1) {
                 _recv_long::<1>(null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d);
@@ -534,7 +544,7 @@ mod test {
             assert_eq! {called.load(Ordering::Relaxed), true};
         };
         test_message_order(&calls);
-        let reversed: MESSAGE_ORDER = calls.iter().rev().cloned().collect();
+        let reversed: MessageOrder = calls.iter().rev().cloned().collect();
         test_message_order(&reversed);
         let mut rng = rand::thread_rng();
         for i in 0..4000 {

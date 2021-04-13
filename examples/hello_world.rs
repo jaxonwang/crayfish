@@ -1,5 +1,3 @@
-use crossbeam;
-use log;
 use rust_apgas::logging;
 use rust_apgas::logging::*;
 use rust_apgas::network;

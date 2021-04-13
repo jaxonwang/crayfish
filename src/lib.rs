@@ -4,5 +4,6 @@ pub mod logging; // TODO: mark as private
 mod meta_data;
 mod activity;
 mod finish;
+mod serialization; 
 
 mod prelude{}

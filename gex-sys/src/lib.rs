@@ -58,16 +58,12 @@ pub fn gex_client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t) {
     let ep = unsafe { ep.assume_init() };
     let tm = unsafe { tm.assume_init() };
     let mut ret = vec![];
-    for i in 0..c_args.len() {
-        let pos = &mut c_args[i] as *mut *mut c_char;
+    for c_arg in &mut c_args {
+        let pos = c_arg as *mut *mut c_char;
         if ptr <= pos && pos < unsafe { ptr.offset(argc as isize) } {
-            ret.push(
-                unsafe { CString::from_raw(c_args[i]) }
-                    .into_string()
-                    .unwrap(),
-            );
+            ret.push(unsafe { CString::from_raw(*c_arg) }.into_string().unwrap());
         } else {
-            drop(unsafe { CString::from_raw(c_args[i]) });
+            drop(unsafe { CString::from_raw(*c_arg) });
         }
     }
     (ret, client, ep, tm)
@@ -109,14 +105,14 @@ impl Entrytable {
         Entrytable { entries: vec![] }
     }
 
-    pub fn add(
+    pub unsafe fn add(
         &mut self,
         f: *const (),
         flags: gex_Flags_t,
         nargs: usize,
         name: Option<&'static str>,
     ) {
-        let handler = unsafe { std::mem::transmute::<*const (), extern "C" fn()>(f) };
+        let handler = std::mem::transmute::<*const (), extern "C" fn()>(f);
         let entry = gex_AM_Entry_t {
             gex_index: 0,
             gex_fnptr: Some(handler),
@@ -131,25 +127,35 @@ impl Entrytable {
         self.entries.push(entry);
     }
 
-    pub fn add_short_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+    pub unsafe fn add_short_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
         self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REQUEST, nargs, name);
     }
 
-    pub fn add_medium_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+    pub unsafe fn add_medium_req(
+        &mut self,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
         self.add(f, GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REQUEST, nargs, name);
     }
 
-    pub fn add_long_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+    pub unsafe fn add_long_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
         self.add(f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST, nargs, name);
     }
 
-    pub fn add_short_reply(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
+    pub unsafe fn add_short_reply(
+        &mut self,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
         self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REPLY, nargs, name);
     }
 }
 
 pub fn gex_register_entries(ep: gex_EP_t, entries: &mut Entrytable) {
-    let ref mut et = entries.entries;
+    let et = &mut entries.entries;
     assert_gasnet_ok(unsafe { gex_EP_RegisterHandlers_Wrap(ep, et.as_mut_ptr(), et.len() as u64) });
 }
 
@@ -178,10 +184,7 @@ pub fn gex_event_wait(event: gex_Event_t) {
 }
 
 pub fn gex_event_occurs(event: gex_Event_t) -> bool {
-    match unsafe { gex_Event_Test_Wrap(event) } {
-        0 => false,
-        _ => true,
-    }
+    !matches!(unsafe { gex_Event_Test_Wrap(event) }, 0)
 }
 
 pub fn gex_ep_query_bound_segment(tm: gex_TM_t, rank: gex_Rank_t) -> (*mut c_void, usize) {
@@ -261,7 +264,7 @@ pub fn gex_am_reqeust_short1(
     }
 }
 
-pub fn gex_am_reqeust_medium0(
+pub unsafe fn gex_am_reqeust_medium0(
     tm: gex_TM_t,
     rank: gex_Rank_t,
     handler: gex_AM_Index_t,
@@ -269,20 +272,18 @@ pub fn gex_am_reqeust_medium0(
     nbytes: size_t,
     lc_opt: *mut gex_Event_t,
 ) {
-    unsafe {
-        assert_gasnet_ok(gex_AM_RequestMedium_Wrap0(
-            tm,
-            rank,
-            handler,
-            source_addr,
-            nbytes,
-            lc_opt,
-            0,
-        ));
-    }
+    assert_gasnet_ok(gex_AM_RequestMedium_Wrap0(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        lc_opt,
+        0,
+    ));
 }
 
-pub fn gex_am_reqeust_long0(
+pub unsafe fn gex_am_reqeust_long0(
     tm: gex_TM_t,
     rank: gex_Rank_t,
     handler: gex_AM_Index_t,
@@ -292,21 +293,19 @@ pub fn gex_am_reqeust_long0(
     dest_offset: isize,
     lc_opt: *mut gex_Event_t,
 ) {
-    unsafe {
-        assert_gasnet_ok(gex_AM_RequestLong_Wrap0(
-            tm,
-            rank,
-            handler,
-            source_addr,
-            nbytes,
-            dest_addr.offset(dest_offset),
-            lc_opt,
-            0,
-        ));
-    }
+    assert_gasnet_ok(gex_AM_RequestLong_Wrap0(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        dest_addr.offset(dest_offset),
+        lc_opt,
+        0,
+    ));
 }
 
-pub fn gex_am_reqeust_long4(
+pub unsafe fn gex_am_reqeust_long4(
     tm: gex_TM_t,
     rank: gex_Rank_t,
     handler: gex_AM_Index_t,
@@ -320,22 +319,20 @@ pub fn gex_am_reqeust_long4(
     arg2: gasnet_handlerarg_t,
     arg3: gasnet_handlerarg_t,
 ) {
-    unsafe {
-        assert_gasnet_ok(gex_AM_RequestLong_Wrap4(
-            tm,
-            rank,
-            handler,
-            source_addr,
-            nbytes,
-            dest_addr.offset(dest_offset),
-            lc_opt,
-            0,
-            arg0,
-            arg1,
-            arg2,
-            arg3,
-        ));
-    }
+    assert_gasnet_ok(gex_AM_RequestLong_Wrap4(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        dest_addr.offset(dest_offset),
+        lc_opt,
+        0,
+        arg0,
+        arg1,
+        arg2,
+        arg3,
+    ));
 }
 
 pub fn gex_am_reply_short0(token: gex_Token_t, handler: gex_AM_Index_t) {
@@ -346,13 +343,11 @@ pub fn gex_am_reply_short0(token: gex_Token_t, handler: gex_AM_Index_t) {
 
 pub fn gex_nbi_wait_am_lc() {
     // wait am local complete
-    unsafe{
+    unsafe {
         gex_NBI_Wait_Wrap(gex_ec_am(), 0);
     }
 }
 
-pub fn gex_coll_barrier_nb(tm:gex_TM_t) -> gex_Event_t{
-    unsafe{
-        gex_Coll_BarrierNB_Wrap(tm, 0)
-    }
+pub fn gex_coll_barrier_nb(tm: gex_TM_t) -> gex_Event_t {
+    unsafe { gex_Coll_BarrierNB_Wrap(tm, 0) }
 }
