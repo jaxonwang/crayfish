@@ -13,7 +13,7 @@ use std::convert::TryInto;
 
 extern crate serde;
 
-pub trait RemoteSend: Serialize + DeserializeOwned + Send + 'static {}
+pub trait RemoteSend: Serialize + DeserializeOwned + Any + Send + 'static {}
 impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send + 'static {}
 
 type PackedValue = Box<dyn Any + Send + 'static>;
@@ -79,6 +79,7 @@ impl SquashBuffer {
         self.fn_ids.push(fn_id);
         self.args_list.push(args);
         for (v, l) in squashable.into_iter() {
+            // only change when squashable is not empty
             match self.squashable_map.get_mut(&v.type_id()) {
                 Some(list) => list.push((v, l)),
                 None => {
@@ -308,44 +309,54 @@ mod test {
         assert_eq!(a.next_label(), 512);
     }
 
-    impl Clone for SquashBufferItem {
-        fn clone(&self) -> Self {
-            let cbox = |v: &(PackedValue, OrderLabel)| {
-                let (a, b) = v;
-                (
-                    Box::new((a.downcast_ref::<usize>().unwrap()).clone()) as PackedValue,
-                    *b,
-                )
-            };
-
-            SquashBufferItem {
-                fn_id: self.fn_id,
-                args: self.args.clone(),
-                squashable: self.squashable.iter().map(cbox).collect(),
-            }
+    fn _clone<T: Send + Clone + 'static>(this: &SquashBufferItem) -> SquashBufferItem {
+        let cbox = |v: &(PackedValue, OrderLabel)| {
+            let (a, b) = v;
+            (
+                Box::new(a.downcast_ref::<T>().unwrap().clone()) as PackedValue,
+                *b,
+            )
+        };
+        SquashBufferItem {
+            fn_id: this.fn_id,
+            args: this.args.clone(),
+            squashable: this.squashable.iter().map(cbox).collect(),
         }
     }
-    impl Eq for SquashBufferItem {}
-    impl PartialEq for SquashBufferItem {
-        fn eq(&self, i: &Self) -> bool {
-            let mut ret = self.fn_id == i.fn_id
-                && self.args == i.args
-                && self.squashable.len() == i.squashable.len();
-            for index in 0..self.squashable.len() {
-                ret = ret && self.squashable[index].1 == i.squashable[index].1;
-                ret = ret
-                    && self.squashable[index].0.downcast_ref::<usize>().unwrap()
-                        == i.squashable[index].0.downcast_ref::<usize>().unwrap();
-                if !ret {
-                    return ret;
-                }
+    fn _eq<T: Send + PartialEq + 'static>(this: &SquashBufferItem, i: &SquashBufferItem) -> bool {
+        let mut ret = this.fn_id == i.fn_id
+            && this.args == i.args
+            && this.squashable.len() == i.squashable.len();
+        for index in 0..this.squashable.len() {
+            ret = ret && this.squashable[index].1 == i.squashable[index].1;
+            ret = ret
+                && this.squashable[index].0.downcast_ref::<T>().unwrap()
+                    == i.squashable[index].0.downcast_ref::<T>().unwrap();
+            if !ret {
+                return false;
             }
-            ret
+        }
+        ret
+    }
+
+    mod usizepacked {
+        use super::*;
+        impl Clone for SquashBufferItem {
+            fn clone(&self) -> Self {
+                _clone::<usize>(self)
+            }
+        }
+        impl Eq for SquashBufferItem {}
+        impl PartialEq for SquashBufferItem {
+            fn eq(&self, i: &Self) -> bool {
+                _eq::<usize>(self, i)
+            }
         }
     }
 
     #[test]
     pub fn test_squashbuffer_push_pop() {
+        use self::usizepacked::*;
         let mut buf = SquashBuffer::default();
         let mut rng = thread_rng();
         let mut items: Vec<SquashBufferItem> = vec![];
