@@ -16,6 +16,7 @@ impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send + 'static 
 type PackedValue = Box<dyn Any + Send + 'static>;
 type PanicPayload = String;
 type FunctionLabel = u32; // function label is line
+type ActivityId = u64;
 type ActivityReturn = std::result::Result<PackedValue, PanicPayload>;
 
 // Squashable is for large size type. Small size type should be wrapped in a largger one
@@ -127,6 +128,70 @@ struct SquashBufferItem {
     fn_id: FunctionLabel,
     args: Vec<u8>,
     squashable: Vec<(PackedValue, OrderLabel)>,
+}
+struct SquashBufferItemExtracter {
+    position: usize,
+    item: SquashBufferItem,
+}
+impl SquashBufferItemExtracter {
+    pub fn new(item: SquashBufferItem) -> Self {
+        let mut item = item;
+        item.squashable.reverse(); // to have the same order as arg, reverse since pop from behind
+        SquashBufferItemExtracter { position: 0, item }
+    }
+    pub fn extract_arg<T: RemoteSend>(&mut self) -> T {
+        let mut read = &self.item.args[self.position..];
+        let t = deserialize_from(&mut read).expect("Failed to deserizalize function argument");
+        self.position = unsafe {
+            read.as_ptr().offset_from(self.item.args.as_ptr()) as usize
+        };
+        t
+    }
+    pub fn extract_arg_squash<T: Squashable>(&mut self) -> T {
+        *self
+            .item
+            .squashable
+            .pop()
+            .unwrap()
+            .0
+            .downcast::<T>()
+            .unwrap()
+    }
+}
+
+#[derive(Default, Debug)]
+struct SquashBufferItemBuilder {
+    next_label: OrderLabel,
+    item: SquashBufferItem,
+}
+impl SquashBufferItemBuilder {
+    pub fn new(fn_id: FunctionLabel, a_id: ActivityId) -> Self {
+        let mut item = SquashBufferItem::default();
+        item.fn_id = fn_id;
+        SquashBufferItemBuilder {
+            next_label: 0,
+            item,
+        }
+    }
+    fn next_label(&mut self) -> OrderLabel {
+        let ret = self.next_label;
+        debug_assert!(ret < 1 << ARGUMENT_ORDER_BITS);
+        self.next_label += 1;
+        ret
+    }
+    pub fn arg<T: RemoteSend>(&mut self, t: T) {
+        serialize_into(&mut self.item.args, &t).expect("Failed to serialize function argument");
+        self.next_label();
+    }
+    pub fn arg_squash<T: Squashable>(&mut self, t: T) {
+        let label = self.next_label();
+        self.item
+            .squashable
+            .push((Box::new(t) as PackedValue, label));
+    }
+    pub fn build(self) -> SquashBufferItem {
+        self.item
+    }
 }
 
 trait SquashOperation {
@@ -411,8 +476,10 @@ mod test {
     fn crate_squash_item(a: A, b: B, fn_id: FunctionLabel) -> SquashBufferItem {
         let mut item = SquashBufferItem::default();
         item.fn_id = fn_id;
-        item.squashable.push((Box::new(a.clone()) as PackedValue, 1));
-        item.squashable.push((Box::new(b.clone()) as PackedValue, 2));
+        item.squashable
+            .push((Box::new(a.clone()) as PackedValue, 1));
+        item.squashable
+            .push((Box::new(b.clone()) as PackedValue, 2));
         item.squashable.push((Box::new(a) as PackedValue, 3));
         item.squashable.push((Box::new(b) as PackedValue, 4));
         item
@@ -477,6 +544,49 @@ mod test {
             .collect();
         assert_eq!(calls, get_calls);
     }
+
+    #[test]
+    pub fn test_item_build_extract(){
+
+        let fn_id: FunctionLabel = 567; // feed by macro
+        let activity_id = 123; //
+        let a = 333i32;
+        let b = A{value:12355};
+        let c = 444i32;
+        let d = B{value:56};
+        let mut builder = SquashBufferItemBuilder::new(fn_id, activity_id);
+        builder.arg(a);
+        builder.arg_squash(b.clone());
+        builder.arg(c);
+        builder.arg_squash(d.clone());
+        let mut item = builder.build();
+        assert_eq!(item.fn_id, fn_id);
+        // assert_eq!(activity, fn_id); TODO: activity id
+        assert_eq!(item.squashable[0].1, 1);
+        assert_eq!(item.squashable[1].1, 3);
+        let mut ex = SquashBufferItemExtracter::new(item);
+        assert_eq!(a, ex.extract_arg());
+        assert_eq!(b, ex.extract_arg_squash());
+        assert_eq!(c, ex.extract_arg());
+        assert_eq!(d, ex.extract_arg_squash());
+    }
+
+    fn real_fn(a: i32, b: i32, c: i32) -> usize {
+        0
+    }
+
+    // fn desugered_async(ctx: &Context, place: place, a: i32, b: A, c: i32) {
+    //     let fn_id: FunctionLabel = 0; // feed by macro
+    //     let activity_id = 123; //
+    //                            // ctx.gen_activity_id();
+    //
+    //     let mut builder = SquashBufferItemBuilder::new(fn_id, activity_id);
+    //     builder.arg(a);
+    //     builder.arg_squash(b);
+    //     builder.arg(c);
+    //     let item = builder.build();
+    //     ctx.send(item);
+    // }
 }
 // fn user_func_A(a: A, b: B, c: i32) -> R {
 //     println!("A {:?} B {:?} C {}", a, b, c);
