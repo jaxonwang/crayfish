@@ -519,7 +519,7 @@ mod test {
         let mut ctx = fake_context(&mut callback);
         set_ptr(&mut ctx);
 
-        let message_len = 102400usize;
+        let message_len = 1024usize;
         let step = 1024;
         let mem_ptr: *const c_void = unsafe { null::<c_void>().offset(0x12345678) };
         let mut calls = vec![];
@@ -547,7 +547,7 @@ mod test {
         let reversed: MessageOrder = calls.iter().rev().cloned().collect();
         test_message_order(&reversed);
         let mut rng = rand::thread_rng();
-        for i in 0..4000 {
+        for _ in 0..4000 {
             calls.shuffle(&mut rng);
             test_message_order(&calls);
         }
