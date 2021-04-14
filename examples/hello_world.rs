@@ -11,12 +11,19 @@ use std::time;
 extern crate rust_apgas;
 extern crate signal_hook;
 
+fn print_hostname(){
+    use std::process::Command;
+    let mut cmd = Command::new("hostname");
+    let name = cmd.output().unwrap().stdout;
+    info!("My hostname is {}", String::from_utf8_lossy(&name[..]));
+}
+
 pub fn main() {
     // signal handling
     let got = Arc::new(atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal::SIGQUIT, Arc::clone(&got)).unwrap();
 
-    let payload_len = 10000000usize;
+    let payload_len = 10000usize;
     let payload: Vec<u8> = (0..payload_len).map(|a| (a % 256) as u8).collect();
     let done_mark = "done".as_bytes();
 
@@ -40,6 +47,7 @@ pub fn main() {
     let here = context.here();
     let world = context.world_size();
 
+    print_hostname();
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
             let sender = sender;
