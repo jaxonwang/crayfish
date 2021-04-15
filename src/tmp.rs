@@ -10,29 +10,12 @@ async fn execute_and_send_fn0(&mut ctx: Context, src_place: Place, a: i32, b: A,
     let future = real_fn(ctx, a, b, c); //macro
     let result = future.catch_unwind().await;
 
-    let ret: ActivityReturn = match result {
-        Ok(ret) => Ok(ret),
-        Err(payload) => {
-            let id = (*payload).type_id();
-            if id == TypeId::of::<String>() {
-                Err(payload.downcast::<String>().unwrap())
-            } else if id == TypeId::of::<&str> {
-                Err(String::from(payload.downcast::<&str>().unwrap()))
-            } else {
-                panic!()
-            }
-        }
-    };
-
     // prepare return message
-    let mut builder = SquashBufferItemBuilder::new(fn_id, my_activity_id);
+    let mut builder = SquashBufferItemBuilder::new(fn_id, src_place, my_activity_id);
     // let mut builder = SquashBufferItemBuilder::new(fn_id, item.place, activity_id);
     spwaned_activities = ctx.spawned();
-    builder.fn_id(fn_id);
-    builder.place(src_place); // return place
-    builder.activity_id(my_activity_id); // my activity id
     builder.sub_activities(spwaned_activities);
-    builder.ret(ret);
+    builder.ret(result); // macro
     builder.build();
     ctx.send(item)
 }

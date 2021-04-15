@@ -2,6 +2,8 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::too_many_arguments)]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -97,6 +99,12 @@ impl<I: std::slice::SliceIndex<[gex_AM_Entry_t]>> std::ops::Index<I> for Entryta
     type Output = I::Output;
     fn index(&self, index: I) -> &Self::Output {
         &self.entries[index]
+    }
+}
+
+impl Default for Entrytable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
