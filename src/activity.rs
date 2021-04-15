@@ -139,15 +139,13 @@ impl SquashBufferItemExtracter {
         item.squashable.reverse(); // to have the same order as arg, reverse since pop from behind
         SquashBufferItemExtracter { position: 0, item }
     }
-    pub fn extract_arg<T: RemoteSend>(&mut self) -> T {
+    pub fn arg<T: RemoteSend>(&mut self) -> T {
         let mut read = &self.item.args[self.position..];
         let t = deserialize_from(&mut read).expect("Failed to deserizalize function argument");
-        self.position = unsafe {
-            read.as_ptr().offset_from(self.item.args.as_ptr()) as usize
-        };
+        self.position = unsafe { read.as_ptr().offset_from(self.item.args.as_ptr()) as usize };
         t
     }
-    pub fn extract_arg_squash<T: Squashable>(&mut self) -> T {
+    pub fn arg_squash<T: Squashable>(&mut self) -> T {
         *self
             .item
             .squashable
@@ -546,14 +544,13 @@ mod test {
     }
 
     #[test]
-    pub fn test_item_build_extract(){
-
+    pub fn test_item_build_extract() {
         let fn_id: FunctionLabel = 567; // feed by macro
         let activity_id = 123; //
         let a = 333i32;
-        let b = A{value:12355};
+        let b = A { value: 12355 };
         let c = 444i32;
-        let d = B{value:56};
+        let d = B { value: 56 };
         let mut builder = SquashBufferItemBuilder::new(fn_id, activity_id);
         builder.arg(a);
         builder.arg_squash(b.clone());
@@ -565,28 +562,11 @@ mod test {
         assert_eq!(item.squashable[0].1, 1);
         assert_eq!(item.squashable[1].1, 3);
         let mut ex = SquashBufferItemExtracter::new(item);
-        assert_eq!(a, ex.extract_arg());
-        assert_eq!(b, ex.extract_arg_squash());
-        assert_eq!(c, ex.extract_arg());
-        assert_eq!(d, ex.extract_arg_squash());
+        assert_eq!(a, ex.arg());
+        assert_eq!(b, ex.arg_squash());
+        assert_eq!(c, ex.arg());
+        assert_eq!(d, ex.arg_squash());
     }
-
-    fn real_fn(a: i32, b: i32, c: i32) -> usize {
-        0
-    }
-
-    // fn desugered_async(ctx: &Context, place: place, a: i32, b: A, c: i32) {
-    //     let fn_id: FunctionLabel = 0; // feed by macro
-    //     let activity_id = 123; //
-    //                            // ctx.gen_activity_id();
-    //
-    //     let mut builder = SquashBufferItemBuilder::new(fn_id, activity_id);
-    //     builder.arg(a);
-    //     builder.arg_squash(b);
-    //     builder.arg(c);
-    //     let item = builder.build();
-    //     ctx.send(item);
-    // }
 }
 // fn user_func_A(a: A, b: B, c: i32) -> R {
 //     println!("A {:?} B {:?} C {}", a, b, c);
