@@ -13,11 +13,11 @@ extern crate serde;
 pub trait RemoteSend: Serialize + DeserializeOwned + Send + 'static {}
 impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send + 'static {}
 
-type PackedValue = Box<dyn Any + Send + 'static>;
-type PanicPayload = String;
-type FunctionLabel = u32; // function label is line
-type ActivityId = u64;
-type ActivityResult = std::result::Result<(), PanicPayload>;
+pub type PackedValue = Box<dyn Any + Send + 'static>;
+pub type PanicPayload = String;
+pub type FunctionLabel = u32; // function label is line
+pub type ActivityId = u64;
+pub type ActivityResult = std::result::Result<(), PanicPayload>;
 
 pub fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayload {
     let id = (*payload).type_id();
@@ -67,6 +67,7 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 
 #[derive(Default, Debug)]
 struct SquashBuffer {
+    // TODO boxex
     items: Vec<StrippedTaskItem>,
     squashable_map: FxHashMap<TypeId, Vec<(PackedValue, OrderLabel)>>, // type id of squashable, must not contain empty vector
     squashed_map: FxHashMap<TypeId, (PackedValue, Vec<OrderLabel>)>,   // type id of squashed, ditto
@@ -126,27 +127,27 @@ impl SquashBuffer {
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
-struct ReturnInfo {
-    result: ActivityResult,
-    sub_activities: Vec<ActivityId>,
+pub struct ReturnInfo {
+    pub result: ActivityResult,
+    pub sub_activities: Vec<ActivityId>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Eq, PartialEq)]
-struct StrippedTaskItem {
-    fn_id: FunctionLabel,
-    place: Place, // before sending, it's dst place, after receive, it's src place
-    activity_id: ActivityId,
-    ret: Option<ReturnInfo>,
-    args: Vec<u8>,
+pub struct StrippedTaskItem {
+    pub fn_id: FunctionLabel,
+    pub place: Place, // before sending, it's dst place, after receive, it's src place
+    pub activity_id: ActivityId,
+    pub ret: Option<ReturnInfo>,
+    pub args: Vec<u8>,
 }
 
 #[derive(Default, Debug)]
-struct TaskItem {
-    inner: StrippedTaskItem,
-    squashable: Vec<(PackedValue, OrderLabel)>,
+pub struct TaskItem {
+    pub inner: StrippedTaskItem,
+    pub squashable: Vec<(PackedValue, OrderLabel)>,
 }
 
-struct TaskItemExtracter {
+pub struct TaskItemExtracter {
     position: usize,
     item: TaskItem,
 }
@@ -205,7 +206,7 @@ impl TaskItemExtracter {
 }
 
 #[derive(Default, Debug)]
-struct TaskItemBuilder {
+pub struct TaskItemBuilder {
     next_label: OrderLabel,
     item: TaskItem,
 }
@@ -705,16 +706,21 @@ mod test {
     pub fn test_cast_panic_payload() {
         use std::panic;
 
+        // silent current panic handler
+        panic::set_hook(Box::new(|_| {}));
         let result = panic::catch_unwind(|| panic!("12345"));
+        let _ = panic::take_hook();
         assert_eq!(cast_panic_payload(result.unwrap_err()), "12345");
 
         let mut rng = thread_rng();
         let value: usize = rng.gen();
         #[allow(non_fmt_panic)]
         let func = |a: usize| panic!(format!("1{}", a));
+        panic::set_hook(Box::new(|_| {}));
         let result = panic::catch_unwind(|| {
             func(value);
         });
+        let _ = panic::take_hook();
         assert_eq!(
             cast_panic_payload(result.unwrap_err()),
             format!("1{}", value)
