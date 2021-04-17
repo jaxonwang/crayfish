@@ -128,23 +128,23 @@ impl SquashBuffer {
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ReturnInfo {
-    pub result: ActivityResult,
-    pub sub_activities: Vec<ActivityId>,
+    result: ActivityResult,
+    sub_activities: Vec<ActivityId>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StrippedTaskItem {
-    pub fn_id: FunctionLabel,
-    pub place: Place, // before sending, it's dst place, after receive, it's src place
-    pub activity_id: ActivityId,
-    pub ret: Option<ReturnInfo>,
-    pub args: Vec<u8>,
+    fn_id: FunctionLabel,
+    place: Place, // before sending, it's dst place, after receive, it's src place
+    activity_id: ActivityId,
+    ret: Option<ReturnInfo>,
+    args: Vec<u8>,
 }
 
 #[derive(Default, Debug)]
 pub struct TaskItem {
-    pub inner: StrippedTaskItem,
-    pub squashable: Vec<(PackedValue, OrderLabel)>,
+    inner: StrippedTaskItem,
+    squashable: Vec<(PackedValue, OrderLabel)>,
 }
 
 pub struct TaskItemExtracter {
@@ -188,6 +188,12 @@ impl TaskItemExtracter {
             Err(e) => Err(e),
         }
     }
+    /// consume and discard the return value but get panic payload
+    pub fn ret_panic(&mut self) -> ActivityResult {
+        let ret_info = self.item.inner.ret.take().unwrap();
+        ret_info.result
+    }
+    /// should be called before ret_xxx
     pub fn sub_activities(&mut self) -> Vec<ActivityId> {
         std::mem::replace(
             &mut self.item.inner.ret.as_mut().unwrap().sub_activities,
@@ -271,7 +277,13 @@ impl TaskItemBuilder {
     }
     pub fn sub_activities(&mut self, a_ids: Vec<ActivityId>) {
         let _ = std::mem::replace(
-            &mut self.item.inner.ret.as_mut().unwrap().sub_activities,
+            &mut self
+                .item
+                .inner
+                .ret
+                .as_mut()
+                .expect("result must be set before sub_activities")
+                .sub_activities,
             a_ids,
         );
     }
