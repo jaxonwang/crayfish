@@ -6,5 +6,6 @@ mod meta_data;
 mod activity;
 mod finish;
 mod serialization; 
+mod global_id;
 
 mod prelude{}

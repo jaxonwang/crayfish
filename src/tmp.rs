@@ -6,7 +6,8 @@ async fn real_fn(&mut ctx: Context, a: i32, b: A, c: i32) -> usize { // macro
 }
 
 // block until real function finished
-async fn execute_and_send_fn0(&mut ctx: Context, my_activity_id:ActivityId,src_place: Place, a: i32, b: A, c: i32) { // macro
+async fn execute_and_send_fn0(my_activity_id:ActivityId,src_place: Place, a: i32, b: A, c: i32) { // macro
+    let ctx = root_ctx.inherit(finish_id);
     let future = real_fn(ctx, a, b, c); //macro
     let result = future.catch_unwind().await;
 
@@ -21,16 +22,15 @@ async fn execute_and_send_fn0(&mut ctx: Context, my_activity_id:ActivityId,src_p
 
 
 // the one executed by worker
-async fn real_fn_wrap_execute_from_remote(&root_ctx: Context, item: SquashBufferItem) {
+async fn real_fn_wrap_execute_from_remote(item: SquashBufferItem) {
     let mut e = SquashBufferItemExtracter::new(item);
     let my_activity_id = e.activity();
     let src_place = e.place();
     let fn_id = e.fn_id();
     let finish_id = get_finish_id(my_activity_id);
-    let ctx = root_ctx.new_ctx(finish_id);
 
     // wait until function return
-    exectute_and_send_fn0(&mut ctx, my_activity_id, src_place, e.arg(), e.arg_squash(), e.arg()).await; // macro 
+    exectute_and_send_fn0(my_activity_id, src_place, e.arg(), e.arg_squash(), e.arg()).await; // macro 
 }
 
 // the desugered at async
@@ -38,9 +38,9 @@ fn async_create_for_fn_id_0(ctx: &mut Context, dst_place: Place, a: i32, b: A, c
     let my_activity_id = ctx.spawn(place); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
-    let f = ctx.create_single_finish_future(my_activity_id);
+    let f = ctx.wait_single(my_activity_id); // macro
     if dst_place == here {
-       let future = execute_and_send(&mut ctx, my_activity_id, a, b, c); // macro
+       let future = execute_and_send(my_activity_id, a, b, c); // macro
        future.then(||f)
     } else {
         let mut builder = SquashBufferItemBuilder::new(fn_id, dst_place, my_activity_id);
@@ -55,7 +55,7 @@ fn async_create_for_fn_id_0(ctx: &mut Context, dst_place: Place, a: i32, b: A, c
 
 // desugered finish
 async fn finish() {
-    let ctx = ctx.new_finish_frame();
+    let ctx = ctx.new_frame();
     // ctx contains a new finish id now
     let f = async_crate_for_fn_id_0(&mut ctx, dst_place, 1, A { value: 3 }, 3);
 

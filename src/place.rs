@@ -1,7 +1,6 @@
+pub use crate::global_id::Place;
 use std::fmt;
 use std::ops::Range;
-
-pub type Place = u32;
 
 #[derive(Copy, Clone, Debug)]
 pub struct PlaceGroup {

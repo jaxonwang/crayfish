@@ -91,6 +91,7 @@ fn i32_4_to_u64_2(a: i32, b: i32, c: i32, d: i32) -> (u64, u64) {
     }
 }
 
+// TODO: make this thread local and in refcell
 const COM_CONTEXT_NULL: *mut CommunicationContext = null_mut::<CommunicationContext>();
 static mut GLOBAL_CONTEXT_PTR: *mut CommunicationContext = COM_CONTEXT_NULL;
 

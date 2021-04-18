@@ -6,6 +6,8 @@ use crate::place::Place;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+pub use crate::global_id::FinishId;
+
 #[derive(Debug, Clone)]
 struct FrameInfo {
     fn_id: FunctionLabel,
@@ -325,7 +327,7 @@ mod test {
             }
         };
 
-        for l in (1..layer) {
+        for l in 1..layer {
             build_layer(l, false);
         }
         build_layer(layer, true);

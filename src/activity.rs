@@ -1,3 +1,4 @@
+pub use crate::global_id::ActivityId;
 use crate::place::Place;
 use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
@@ -16,7 +17,6 @@ impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send + 'static 
 pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
 pub type FunctionLabel = u32; // function label is line
-pub type ActivityId = u64;
 pub type ActivityResult = std::result::Result<(), PanicPayload>;
 
 pub fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayload {
