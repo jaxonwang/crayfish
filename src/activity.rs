@@ -146,6 +146,17 @@ pub struct TaskItem {
     inner: StrippedTaskItem,
     squashable: Vec<(PackedValue, OrderLabel)>,
 }
+impl TaskItem{
+    pub fn is_ret(&self) -> bool {
+        self.inner.ret.is_some()
+    }
+    pub fn place(&self) -> Place{
+        self.inner.place
+    }
+    pub fn activity_id(&self) -> ActivityId{
+        self.inner.activity_id
+    }
+}
 
 pub struct TaskItemExtracter {
     position: usize,

@@ -6,6 +6,7 @@ pub type Place = u16;
 pub type WorkerId = u16;
 pub type FinishId = u64;
 pub type ActivityId = u128;
+pub type ActivityIdLower = u64;
 type FinishLocalId = u32;
 type ActivityLocalId = u32;
 
@@ -22,6 +23,8 @@ impl FinishIdMethods for FinishId {
 pub trait ActivityIdMethods {
     fn get_activity_place(&self) -> Place;
     fn get_finish_id(&self) -> FinishId;
+    fn update_finish_id(&self, fid: FinishId) -> ActivityId;
+    fn get_lower(&self) -> ActivityIdLower;
 }
 
 impl ActivityIdMethods for ActivityId {
@@ -30,6 +33,12 @@ impl ActivityIdMethods for ActivityId {
     }
     fn get_finish_id(&self) -> FinishId {
         (*self >> 64) as FinishId
+    }
+    fn update_finish_id(&self, fid: FinishId) -> ActivityId {
+        (fid as ActivityId) << 64 | (self & ((1 << 64) - 1))
+    }
+    fn get_lower(&self) -> ActivityIdLower {
+        (*self & ((1 << 64) - 1)) as ActivityIdLower
     }
 }
 
@@ -104,10 +113,10 @@ pub fn new_global_activity_id(fid: FinishId, place: Place) -> ActivityId {
 #[cfg(test)]
 mod test {
 
+    use std::collections::HashSet;
     use std::sync::mpsc;
     use std::sync::MutexGuard;
     use std::thread;
-    use std::collections::HashSet;
 
     const TEST_HERE: Place = 7;
     lazy_static! {
@@ -176,20 +185,20 @@ mod test {
         for t in threads {
             t.join().unwrap();
         }
-        
+
         // all workder id should be unique
         let s: HashSet<_> = ids.iter().cloned().collect();
         assert_eq!(ids.len(), s.len());
     }
 
     #[test]
-    fn test_local_id(){
+    fn test_local_id() {
         let _a = SetHere::new();
         let mut threads = vec![];
         let range = 0..8;
         for _ in range.clone() {
             threads.push(thread::spawn(move || {
-                for j in 1..10{
+                for j in 1..10 {
                     assert_eq!(next_finish_local_id(), j as FinishLocalId);
                     assert_eq!(next_activity_local_id(), j as FinishLocalId);
                 }
@@ -201,7 +210,7 @@ mod test {
     }
 
     #[test]
-    fn test_global_id(){
+    fn test_global_id() {
         let _a = SetHere::new();
 
         // id get works well
@@ -210,6 +219,11 @@ mod test {
         let aid = new_global_activity_id(fid, 233 as Place);
         assert_eq!(aid.get_finish_id(), fid);
         assert_eq!(aid.get_activity_place(), 233 as Place);
+        let new_fid: FinishId = 12346;
+        let new_aid = aid.update_finish_id(new_fid);
+        assert_eq!(new_aid.get_finish_id(), new_fid);
+        assert_eq!(new_aid.update_finish_id(fid), aid); // set back
+        assert_eq!(aid.get_lower(), aid.update_finish_id(0) as ActivityIdLower);
 
         // globally unique
         let (atx, arx) = mpsc::sync_channel::<ActivityId>(0);
@@ -221,7 +235,7 @@ mod test {
             let atx = atx.clone();
             let ftx = ftx.clone();
             threads.push(thread::spawn(move || {
-                for _ in 1..1025{
+                for _ in 1..1025 {
                     let fid = new_global_finish_id();
                     ftx.send(fid).unwrap();
                     atx.send(new_global_activity_id(fid, 123)).unwrap();
@@ -230,7 +244,7 @@ mod test {
         }
         let mut aids = vec![];
         let mut fids = vec![];
-        for i in 0..8*1024{
+        for _ in 0..8 * 1024 {
             fids.push(frx.recv().unwrap());
             aids.push(arx.recv().unwrap());
         }
@@ -238,8 +252,8 @@ mod test {
             t.join().unwrap();
         }
 
-        let count_fids:HashSet<_> = fids.iter().cloned().collect();
-        let count_aids:HashSet<_> = aids.iter().cloned().collect();
+        let count_fids: HashSet<_> = fids.iter().cloned().collect();
+        let count_aids: HashSet<_> = aids.iter().cloned().collect();
         assert_eq!(aids.len(), count_aids.len());
         assert_eq!(fids.len(), count_fids.len());
     }

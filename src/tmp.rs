@@ -7,8 +7,9 @@ async fn real_fn(&mut ctx: Context, a: i32, b: A, c: i32) -> usize { // macro
 
 // block until real function finished
 async fn execute_and_send_fn0(my_activity_id:ActivityId,src_place: Place, a: i32, b: A, c: i32) { // macro
-    let ctx = root_ctx.inherit(finish_id);
-    let future = real_fn(ctx, a, b, c); //macro
+    let finish_id = my_activity_id.get_finish_id();
+    let mut ctx = ConcreteContext::inherit(finish_id);
+    let future = real_fn(&mut ctx, a, b, c); //macro
     let result = future.catch_unwind().await;
 
     // prepare return message
@@ -38,7 +39,7 @@ fn async_create_for_fn_id_0(ctx: &mut Context, dst_place: Place, a: i32, b: A, c
     let my_activity_id = ctx.spawn(place); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
-    let f = ctx.wait_single(my_activity_id); // macro
+    let f = ctx.wait_single::<A>(my_activity_id); // macro
     if dst_place == here {
        let future = execute_and_send(my_activity_id, a, b, c); // macro
        future.then(||f)

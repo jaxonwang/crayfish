@@ -24,7 +24,7 @@ struct CallingTreeNode {
 }
 
 #[derive(Debug)]
-struct CallingTree {
+pub struct CallingTree {
     lookup_table: FxHashMap<ActivityId, CallingTreeNode>,
     panic_backtrace: Vec<FrameInfo>,
     panic_backtrace_top: Option<ActivityId>,

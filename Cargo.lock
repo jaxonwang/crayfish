@@ -608,6 +608,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "num_cpus",
  "rand",
  "rustc-hash",
  "serde",
