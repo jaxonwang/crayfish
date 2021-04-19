@@ -64,6 +64,7 @@ type OrderLabel = u32; // lower 8 bit is for the position in side a function
 const ARGUMENT_ORDER_BITS: u32 = 8;
 
 // TODO: should impl serialize
+// TODO: arrange squash
 
 #[derive(Default, Debug)]
 struct SquashBuffer {

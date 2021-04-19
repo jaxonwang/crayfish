@@ -133,37 +133,37 @@ impl ApgasContext for ConcreteContext {
         aid
     }
     fn send(&self, item: Box<TaskItem>) {
-        get_task_item_sender_ref().send(item);
+        get_task_item_sender_ref().send(item).unwrap();
     }
 }
 
-async fn wait_single_squash<T: Squashable>(ctx: &mut ConcreteContext, wait_this: ActivityId) -> T {
+pub async fn wait_single_squash<T: Squashable>(ctx: &mut ConcreteContext, wait_this: ActivityId) -> T {
     ctx.sub_activities.remove(&wait_this);
 
     // TODO dup code
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-    get_wait_request_sender_ref().send(Box::new((WaitItem::One(wait_this), tx)));
+    get_wait_request_sender_ref().send(Box::new((WaitItem::One(wait_this), tx))).unwrap();
     let item = rx.await.unwrap();
     let mut ex = TaskItemExtracter::new(*item);
     let ret = ex.ret_squash::<T>();
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-async fn wait_single<T: RemoteSend>(ctx: &mut ConcreteContext, wait_this: ActivityId) -> T {
+pub async fn wait_single<T: RemoteSend>(ctx: &mut ConcreteContext, wait_this: ActivityId) -> T {
     ctx.sub_activities.remove(&wait_this);
 
     // TODO dup code
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-    get_wait_request_sender_ref().send(Box::new((WaitItem::One(wait_this), tx)));
+    get_wait_request_sender_ref().send(Box::new((WaitItem::One(wait_this), tx))).unwrap();
     let item = rx.await.unwrap();
     let mut ex = TaskItemExtracter::new(*item);
     let ret = ex.ret::<T>();
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-async fn wait_all(ctx: ConcreteContext) {
+pub async fn wait_all(ctx: ConcreteContext) {
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-    get_wait_request_sender_ref().send(Box::new((WaitItem::All(ctx), tx)));
+    get_wait_request_sender_ref().send(Box::new((WaitItem::All(ctx), tx))).unwrap();
     let item = rx.await.unwrap();
     let mut ex = TaskItemExtracter::new(*item);
     let ret = ex.ret_panic();
@@ -180,7 +180,7 @@ impl RemoteItemReceiver {
 }
 
 #[derive(Debug)]
-struct ExecutionHub {
+pub struct ExecutionHub {
     task_item_receivers: Vec<Receiver<Box<TaskItem>>>,
     wait_request_receivers: Vec<Receiver<WaitRequest>>,
     return_item_sender: FxHashMap<FinishId, oneshot::Sender<Box<TaskItem>>>,
@@ -261,7 +261,7 @@ impl ExecutionHub {
                 Box::new(panic_payload) as Box<dyn Any + Send + 'static>
             )),
         }
-        sender.send(Box::new(b.build()));
+        sender.send(Box::new(b.build())).unwrap();
     }
 
     fn handle_wait_request(&mut self, wr: WaitRequest) {
