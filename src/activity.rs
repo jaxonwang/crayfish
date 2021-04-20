@@ -260,6 +260,9 @@ impl TaskItemBuilder {
     pub fn build(self) -> TaskItem {
         self.item
     }
+    pub fn build_box(self) -> Box<TaskItem> {
+        Box::new(self.build())
+    }
     fn set_result(&mut self, result: ActivityResult) {
         debug_assert!(self.item.inner.ret.is_none());
         self.item.inner.ret = Some(ReturnInfo {
@@ -399,7 +402,7 @@ fn extract_into<T: Squashable>(
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
     use rand::prelude::*;
     use rand::seq::SliceRandom;
@@ -508,12 +511,12 @@ mod test {
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-    struct A {
-        value: usize,
+    pub struct A {
+        pub value: usize,
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-    struct AOut {
+    pub struct AOut {
         last: usize,
         diffs: Vec<u8>,
     }

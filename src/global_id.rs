@@ -1,6 +1,8 @@
-use lazy_static::lazy_static;
+use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use std::cell::Cell;
 use std::sync::Mutex;
+extern crate once_cell;
 
 pub type Place = u16;
 pub type WorkerId = u16;
@@ -42,10 +44,9 @@ impl ActivityIdMethods for ActivityId {
     }
 }
 
-lazy_static! {
-    static ref HERE_STATIC: Mutex<Option<Place>> = Mutex::new(None);
-    static ref NEXT_WORKER_ID: Mutex<WorkerId> = Mutex::new(0);
-}
+static HERE_STATIC: OnceCell<Place> = OnceCell::new();
+// two level mutex here, but I think the code is clear
+static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(||Mutex::new(0)); 
 
 thread_local! {
     pub static HERE_LOCAL: Cell<Option<Place>> = Cell::new(None);
@@ -55,13 +56,12 @@ thread_local! {
 }
 
 pub fn here() -> Place {
-    HERE_LOCAL.with(|here| match here.get() {
+    HERE_LOCAL.with(|h| match h.get() {
         Some(p) => p,
         None => {
-            let p = HERE_STATIC.lock().unwrap();
-            let p = p.as_ref().expect("here place id is not initialized");
-            here.set(Some(*p));
-            *p
+            let p = HERE_STATIC.get().expect("here place id is not initialized");
+            h.set(Some(*p));
+            here()
         }
     })
 }
@@ -69,13 +69,12 @@ pub fn here() -> Place {
 pub fn my_worker_id() -> WorkerId {
     WORKER_ID.with(|wid| {
         match wid.get() {
-            Some(w) => w,
+            Some(w_id) => w_id,
             None => {
-                let mut w = NEXT_WORKER_ID.lock().unwrap();
-                wid.set(Some(*w));
-                let myid = *w;
-                *w = w.checked_add(1).unwrap(); // force overflow panic
-                myid
+                let mut w_id_old = NEXT_WORKER_ID.lock().unwrap();
+                wid.set(Some(*w_id_old));
+                *w_id_old = w_id_old.checked_add(1).unwrap(); // force overflow panic
+                my_worker_id()
             }
         }
     })
@@ -111,43 +110,45 @@ pub fn new_global_activity_id(fid: FinishId, place: Place) -> ActivityId {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
 
+    use super::*;
     use std::collections::HashSet;
     use std::sync::mpsc;
     use std::sync::MutexGuard;
+    use std::sync::Mutex;
     use std::thread;
 
     const TEST_HERE: Place = 7;
-    lazy_static! {
-        static ref TEST_LOCK: Mutex<bool> = Mutex::new(false);
+    static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(||Mutex::new(false));
+
+    pub fn global_id_reset_everything() {
+        match HERE_STATIC.set(TEST_HERE){ // only set once
+            _ => ()
+        }
+        *NEXT_WORKER_ID.lock().unwrap() = 0;
+        HERE_LOCAL.with(|h| h.set(None));
+        WORKER_ID.with(|w| w.set(None));
+        NEXT_FINISH_LOCAL_ID.with(|f| f.set(0));
+        NEXT_ACTIVITY_LOCAL_ID.with(|a| a.set(0));
     }
-    use super::*;
-    struct SetHere<'a> {
+    pub struct TestGuardForStatic<'a> {
         _guard: MutexGuard<'a, bool>,
     }
 
-    impl<'a> SetHere<'a> {
-        fn new() -> Self {
-            let ret = SetHere {
+    impl<'a> TestGuardForStatic<'a> {
+        pub fn new() -> Self {
+            let ret = TestGuardForStatic { // must get test lock first
                 _guard: TEST_LOCK.lock().unwrap(),
             };
-            let mut p = HERE_STATIC.lock().unwrap();
-            assert!(p.is_none());
-            *p = Some(TEST_HERE);
+            global_id_reset_everything();
             ret
-        }
-    }
-    impl<'a> Drop for SetHere<'a> {
-        fn drop(&mut self) {
-            let mut p = HERE_STATIC.lock().unwrap();
-            *p = None;
         }
     }
 
     #[test]
     fn test_here() {
-        let _a = SetHere::new();
+        let _a = TestGuardForStatic::new();
         let mut threads = vec![];
         for _ in 0..8 {
             threads.push(thread::spawn(|| {
@@ -164,7 +165,7 @@ mod test {
 
     #[test]
     fn test_worker_id() {
-        let _a = SetHere::new();
+        let _a = TestGuardForStatic::new();
         let mut threads = vec![];
         let (tx, rx) = mpsc::sync_channel::<WorkerId>(0);
         let range = 0..8;
@@ -193,7 +194,7 @@ mod test {
 
     #[test]
     fn test_local_id() {
-        let _a = SetHere::new();
+        let _a = TestGuardForStatic::new();
         let mut threads = vec![];
         let range = 0..8;
         for _ in range.clone() {
@@ -211,7 +212,7 @@ mod test {
 
     #[test]
     fn test_global_id() {
-        let _a = SetHere::new();
+        let _a = TestGuardForStatic::new();
 
         // id get works well
         let fid = new_global_finish_id();
