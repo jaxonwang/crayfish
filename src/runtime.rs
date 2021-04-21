@@ -273,7 +273,7 @@ impl ExecutionHub {
                         tree_all_done = true; // use another flag to pass borrow checker
                     }
                 } else {
-                    // not single wait not waited
+                    // not waited, go to free items
                     if let Some(task_items) = self.free_items.get_mut(&finish_id) {
                         task_items.push(item);
                     } else {
@@ -398,6 +398,7 @@ mod test {
     use futures::executor;
     use std::thread;
     use std::time;
+    use crate::activity::test::A; // TODO: write test utilities
 
     struct RuntimeTestGuard<'a> {
         _guard: TestGuardForStatic<'a>,
@@ -564,7 +565,6 @@ mod test {
 
     #[test]
     fn test_single_wait_local_send_many_wait() {
-        use crate::activity::test::A; // TODO: write test utilities
         let _e = ExecutorHubSetUp::new();
         // new context
         let mut ctx = ConcreteContext::new_frame();
@@ -654,5 +654,27 @@ mod test {
             send_1_local(aid, sub);
             count += 1;
         }
+    }
+
+    #[test]
+    fn test_local_worker_task_queue(){
+        let _e = ExecutorHubSetUp::new();
+        let mut q = WORKER_TASK_QUEUE.lock().unwrap();
+        let worker_receiver = q.1.take().unwrap();
+        let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
+        builder.arg(1usize);
+        builder.arg(0.5f64);
+        builder.arg_squash(A{value:123});
+        ConcreteContext::send(builder.build_box());
+        let item = worker_receiver.recv().unwrap();
+        let mut e = TaskItemExtracter::new(*item);
+        assert_eq!(e.fn_id(), 1);
+        assert_eq!(e.place(), global_id::here());
+        assert_eq!(e.activity_id(), 3);
+        assert_eq!(e.arg::<usize>(), 1);
+        assert_eq!(e.arg::<f64>(), 0.5);
+        assert_eq!(e.arg_squash::<A>(), A{value:123});
+        assert!(matches!(worker_receiver.try_recv().unwrap_err(), mpsc::TryRecvError::Empty));
+
     }
 }
