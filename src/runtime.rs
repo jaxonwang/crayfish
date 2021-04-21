@@ -114,80 +114,67 @@ fn get_wait_request_sender_ref() -> &'static Sender<WaitRequest> {
 pub trait ApgasContext {
     fn inherit(finish_id: FinishId) -> Self;
     fn new_frame() -> Self;
-    fn spwaned(&self) -> Vec<ActivityId>;
-    fn spwan(&mut self, place: Place) -> ActivityId;
-    fn send(&self, item: Box<TaskItem>);
+    fn spwaned(self) -> Vec<ActivityId>;
+    fn spwan(&mut self) -> ActivityId;
+    fn send(item: Box<TaskItem>);
 }
 
 #[derive(Debug)]
 pub struct ConcreteContext {
-    sub_activities: FxHashSet<ActivityId>,
+    sub_activities: Vec<ActivityId>,
     finish_id: FinishId,
 }
 
 impl ApgasContext for ConcreteContext {
     fn inherit(finish_id: FinishId) -> Self {
         ConcreteContext {
-            sub_activities: FxHashSet::default(),
+            sub_activities: vec![],
             finish_id,
         }
     }
     fn new_frame() -> Self {
         ConcreteContext {
-            sub_activities: FxHashSet::default(),
+            sub_activities: vec![],
             finish_id: global_id::new_global_finish_id(),
         }
     }
-    fn spwaned(&self) -> Vec<ActivityId> {
-        self.sub_activities.iter().cloned().collect()
+    fn spwaned(self) -> Vec<ActivityId> {
+        self.sub_activities
     }
 
-    fn spwan(&mut self, place: Place) -> ActivityId {
-        let aid = global_id::new_global_activity_id(self.finish_id, place);
-        self.sub_activities.insert(aid);
+    fn spwan(&mut self) -> ActivityId {
+        let aid = global_id::new_global_activity_id(self.finish_id);
+        self.sub_activities.push(aid);
         aid
     }
-    fn send(&self, item: Box<TaskItem>) {
+
+    fn send(item: Box<TaskItem>) {
         get_task_item_sender_ref().send(item).unwrap();
     }
 }
 
-pub fn wait_single_squash<T: Squashable>(
-    ctx: &mut ConcreteContext,
-    wait_this: ActivityId,
-) -> impl futures::Future<Output = T> {
-    ctx.sub_activities.remove(&wait_this);
-
+pub async fn wait_single<T: RemoteSend>(wait_this: ActivityId) -> T {
     // TODO dup code
-    async move {
-        let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-        get_wait_request_sender_ref()
-            .send(Box::new((WaitItem::One(wait_this), tx)))
-            .unwrap();
-        let item = rx.await.unwrap();
-        let mut ex = TaskItemExtracter::new(*item);
-        let ret = ex.ret_squash::<T>();
-        ret.unwrap() // assert no panic here TODO: deal with panic payload
-    }
+    let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
+    get_wait_request_sender_ref()
+        .send(Box::new((WaitItem::One(wait_this), tx)))
+        .unwrap();
+    let item = rx.await.unwrap();
+    let mut ex = TaskItemExtracter::new(*item);
+    let ret = ex.ret::<T>();
+    ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-pub fn wait_single<T: RemoteSend>(
-    ctx: &mut ConcreteContext,
-    wait_this: ActivityId,
-) -> impl futures::Future<Output = T> {
-    ctx.sub_activities.remove(&wait_this);
-
+pub async fn wait_single_squash<T: Squashable>(wait_this: ActivityId) -> T {
     // TODO dup code
-    async move {
-        let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-        get_wait_request_sender_ref()
-            .send(Box::new((WaitItem::One(wait_this), tx)))
-            .unwrap();
-        let item = rx.await.unwrap();
-        let mut ex = TaskItemExtracter::new(*item);
-        let ret = ex.ret::<T>();
-        ret.unwrap() // assert no panic here TODO: deal with panic payload
-    }
+    let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
+    get_wait_request_sender_ref()
+        .send(Box::new((WaitItem::One(wait_this), tx)))
+        .unwrap();
+    let item = rx.await.unwrap();
+    let mut ex = TaskItemExtracter::new(*item);
+    let ret = ex.ret_squash::<T>();
+    ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
 pub async fn wait_all(ctx: ConcreteContext) {
@@ -217,6 +204,7 @@ pub struct ExecutionHub {
     return_item_sender: FxHashMap<FinishId, oneshot::Sender<Box<TaskItem>>>,
     calling_trees: FxHashMap<FinishId, CallingTree>,
     free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
+    single_wait_free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
     single_wait: FxHashMap<ActivityIdLower, oneshot::Sender<Box<TaskItem>>>,
     stop: Arc<AtomicBool>,
     remote_item_receiver: RemoteItemReceiver,
@@ -245,6 +233,7 @@ impl ExecutionHub {
             calling_trees: FxHashMap::default(),
             free_items: FxHashMap::default(),
             single_wait: FxHashMap::default(),
+            single_wait_free_items: FxHashMap::default(),
             stop: Arc::new(AtomicBool::new(false)),
             remote_item_receiver: RemoteItemReceiver {},
             worker_task_queue,
@@ -265,19 +254,27 @@ impl ExecutionHub {
     fn handle_item(&mut self, item: Box<TaskItem>) {
         if item.place() == global_id::here() {
             if item.is_ret() {
+                // if is finish but waited here, the item.place() == here()
                 let activity_id = item.activity_id();
                 let finish_id = activity_id.get_finish_id();
                 let mut tree_all_done = false;
-                // waited by a single wait
-                if let Some(sender) = self.single_wait.remove(&activity_id.get_lower()) {
-                    sender.send(item).unwrap();
+                if item.is_waited() {
+                    // waited by a single wait
+                    if let Some(sender) = self.single_wait.remove(&activity_id.get_lower()) {
+                        sender.send(item).unwrap();
+                    } else {
+                        // not yet waited, go to free item
+                        self.single_wait_free_items
+                            .insert(activity_id.get_lower(), item);
+                    }
                 // waited by an all wait
                 } else if let Some(tree) = self.calling_trees.get_mut(&finish_id) {
                     tree.activity_done(item);
                     if tree.all_done() {
-                        tree_all_done = true;
+                        tree_all_done = true; // use another flag to pass borrow checker
                     }
                 } else {
+                    // not single wait not waited
                     self.free_items.insert(activity_id.get_lower(), item);
                 }
                 // clean up and send back
@@ -287,6 +284,7 @@ impl ExecutionHub {
                     Self::wait_all_finish_and_send_return(tree, sender);
                 }
             } else {
+                // is request
                 self.worker_task_queue.send(item).unwrap();
             }
         } else {
@@ -310,7 +308,7 @@ impl ExecutionHub {
 
         match w_item {
             WaitItem::One(aid) => {
-                if let Some(task_item) = self.free_items.remove(&aid.get_lower()) {
+                if let Some(task_item) = self.single_wait_free_items.remove(&aid.get_lower()) {
                     // already finished, directly send back
                     w_sender.send(task_item).unwrap();
                 } else {
@@ -482,11 +480,56 @@ mod test {
             self.join_handle.take().unwrap().join().unwrap();
         }
     }
-    // impl Drop for ExecutionHub{
-    //     fn drop(&mut self){
-    //         println!("i amd function stop!");
-    //     }
-    // }
+
+    fn send_2_local<T: RemoteSend>(
+        aid: ActivityId,
+        result_value: T,
+        sub_activities: Vec<ActivityId>,
+    ) {
+        let here = global_id::here();
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
+        builder.sub_activities(sub_activities);
+        ConcreteContext::send(builder.build_box());
+
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret(thread::Result::<T>::Ok(result_value));
+        builder.waited();
+        ConcreteContext::send(builder.build_box());
+    }
+
+    fn send_2_local_panic(aid: ActivityId, sub_activities: Vec<ActivityId>){
+        let here = global_id::here();
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
+        builder.sub_activities(sub_activities);
+        ConcreteContext::send(builder.build_box());
+
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        let j = thread::spawn(|| panic!("I panic!"));
+        builder.ret(j.join());
+        builder.waited();
+        ConcreteContext::send(builder.build_box());
+
+    }
+
+    fn send_2_squash_local<T: Squashable>(
+        aid: ActivityId,
+        result_value: T,
+        sub_activities: Vec<ActivityId>,
+    ) {
+        let here = global_id::here();
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
+        builder.sub_activities(sub_activities);
+        ConcreteContext::send(builder.build_box());
+
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret_squash(thread::Result::<T>::Ok(result_value));
+        builder.waited();
+        ConcreteContext::send(builder.build_box());
+    }
+
     #[test]
     fn test_single_wait_local_send_after_wait_no_panic() {
         let _e = ExecutorHubSetUp::new();
@@ -495,18 +538,16 @@ mod test {
         let here = global_id::here();
         assert_eq!(here, ctx.finish_id.get_place());
         // register a sub activity
-        let new_aid = ctx.spwan(here);
-        let f = wait_single::<usize>(&mut ctx, new_aid);
+        let new_aid = ctx.spwan();
+        let f = wait_single::<usize>(new_aid);
         let return_value = 123456;
         let can_ret =
             ShouldNotReturnUntil::new(move || assert_eq!(executor::block_on(f), return_value));
         // prepare and send return
-        let mut builder = TaskItemBuilder::new(0, here, new_aid);
-        builder.ret(thread::Result::<usize>::Ok(return_value));
-        let item = builder.build_box();
         thread::sleep(time::Duration::from_millis(1));
         can_ret.can_return_now();
-        ctx.send(item);
+        // send back to single wait and finish block owner
+        send_2_local(new_aid, return_value, vec![]);
         drop(can_ret);
         // wait all
         executor::block_on(wait_all(ctx));
@@ -524,27 +565,21 @@ mod test {
         // prepare and send return
         for return_value in 0..1024 {
             // register a sub activity
-            let new_aid = ctx.spwan(here);
-            wait_these.push((wait_single::<usize>(&mut ctx, new_aid), return_value));
-            let mut builder = TaskItemBuilder::new(0, here, new_aid);
-            builder.ret(thread::Result::<usize>::Ok(return_value));
-            let item = builder.build_box();
-            ctx.send(item);
+            let new_aid = ctx.spwan();
+            wait_these.push((wait_single::<usize>(new_aid), return_value));
+            send_2_local(new_aid, return_value, vec![]);
         }
 
         for value in 0..1024 {
-            let new_aid = ctx.spwan(here);
-            let return_a = A{value};
-            wait_squash.push((wait_single_squash::<A>(&mut ctx, new_aid), return_a.clone()));
-            let mut builder = TaskItemBuilder::new(0, here, new_aid);
-            builder.ret_squash(thread::Result::<A>::Ok(return_a));
-            let item = builder.build_box();
-            ctx.send(item);
+            let new_aid = ctx.spwan();
+            let return_a = A { value };
+            wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
+            send_2_squash_local(new_aid, return_a, vec![]);
         }
         for (f, v) in wait_these {
             assert_eq!(executor::block_on(f), v);
         }
-        for (f, v) in wait_squash{
+        for (f, v) in wait_squash {
             assert_eq!(executor::block_on(f), v);
         }
         // wait all
@@ -559,14 +594,11 @@ mod test {
         let mut ctx = ConcreteContext::new_frame();
         let here = global_id::here();
 
-        let new_aid = ctx.spwan(here);
-        let f = wait_single::<usize>(&mut ctx, new_aid);
-        let mut builder = TaskItemBuilder::new(0, here, new_aid);
-        let j = thread::spawn(|| panic!("I panic!"));
-        builder.ret(j.join());
-        let item = builder.build_box();
-        ctx.send(item);
+        let new_aid = ctx.spwan();
+        let f = wait_single::<usize>(new_aid);
+        send_2_local_panic(new_aid, vec![]);
 
         executor::block_on(f);
+        executor::block_on(wait_all(ctx));
     }
 }

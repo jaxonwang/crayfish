@@ -23,14 +23,14 @@ impl FinishIdMethods for FinishId {
 }
 
 pub trait ActivityIdMethods {
-    fn get_activity_place(&self) -> Place;
+    fn get_spawned_place(&self) -> Place;
     fn get_finish_id(&self) -> FinishId;
     fn update_finish_id(&self, fid: FinishId) -> ActivityId;
     fn get_lower(&self) -> ActivityIdLower;
 }
 
 impl ActivityIdMethods for ActivityId {
-    fn get_activity_place(&self) -> Place {
+    fn get_spawned_place(&self) -> Place {
         (*self >> (32 + 16) & ((1 << 16) - 1)) as Place
     }
     fn get_finish_id(&self) -> FinishId {
@@ -103,8 +103,9 @@ pub fn new_global_finish_id() -> FinishId {
     prefix | next_finish_local_id() as FinishId
 }
 
-pub fn new_global_activity_id(fid: FinishId, place: Place) -> ActivityId {
-    let suffix = ((place as ActivityId) << 16 | my_worker_id() as ActivityId) << 32;
+// place part of lower activity id is the place it spwan
+pub fn new_global_activity_id(fid: FinishId) -> ActivityId {
+    let suffix = ((here() as ActivityId) << 16 | my_worker_id() as ActivityId) << 32;
     let suffix = suffix | next_activity_local_id() as ActivityId;
     (fid as ActivityId) << 64 | suffix
 }
@@ -217,9 +218,9 @@ pub mod test {
         // id get works well
         let fid = new_global_finish_id();
         assert_eq!(fid.get_place(), TEST_HERE);
-        let aid = new_global_activity_id(fid, 233 as Place);
+        let aid = new_global_activity_id(fid);
         assert_eq!(aid.get_finish_id(), fid);
-        assert_eq!(aid.get_activity_place(), 233 as Place);
+        assert_eq!(aid.get_spawned_place(), here());
         let new_fid: FinishId = 12346;
         let new_aid = aid.update_finish_id(new_fid);
         assert_eq!(new_aid.get_finish_id(), new_fid);
@@ -239,7 +240,7 @@ pub mod test {
                 for _ in 1..1025 {
                     let fid = new_global_finish_id();
                     ftx.send(fid).unwrap();
-                    atx.send(new_global_activity_id(fid, 123)).unwrap();
+                    atx.send(new_global_activity_id(fid)).unwrap();
                 }
             }));
         }

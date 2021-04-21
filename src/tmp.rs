@@ -6,52 +6,80 @@ async fn real_fn(&mut ctx: Context, a: i32, b: A, c: i32) -> usize { // macro
 }
 
 // block until real function finished
-async fn execute_and_send_fn0(my_activity_id:ActivityId,src_place: Place, a: i32, b: A, c: i32) { // macro
+async fn execute_and_send_fn0(my_activity_id:ActivityId, waited: bool, a: i32, b: A, c: i32) { // macro
     let finish_id = my_activity_id.get_finish_id();
     let mut ctx = ConcreteContext::inherit(finish_id);
     let future = real_fn(&mut ctx, a, b, c); //macro
     let result = future.catch_unwind().await;
 
-    // prepare return message
-    let mut builder = SquashBufferItemBuilder::new(fn_id, src_place, my_activity_id);
+    // TODO panic?
+    // should set dst place of return to it's finishid, to construct calling tree
+    let mut builder = SquashBufferItemBuilder::new(fn_id, finish_id.get_place(), my_activity_id);
     spwaned_activities = ctx.spawned(); // get activitiy spwaned in real_fn
-    builder.ret(result); // macro
+    builder.ret(result); // macro TODO: strip return value
     builder.sub_activities(spwaned_activities);
     let item = builder.build();
-    ctx.send(item)
+    Context::send(item); 
+    // send to the place waited (spwaned)
+    if waited{
+        // two ret must be identical if dst is the same place
+        let mut builder = SquashBufferItemBuilder::new(fn_id, my_activity_id.get_spawned_place(), my_activity_id);
+        builder.ret(result); // macro
+        builder.sub_activities(spwaned_activities);
+        let item = builder.build();
+        Context::send(item); 
+    }
 }
 
 
 // the one executed by worker
 async fn real_fn_wrap_execute_from_remote(item: SquashBufferItem) {
+    let waited = item.is_waited();
     let mut e = SquashBufferItemExtracter::new(item);
     let my_activity_id = e.activity();
-    let src_place = e.place();
     let fn_id = e.fn_id();
     let finish_id = get_finish_id(my_activity_id);
 
     // wait until function return
-    exectute_and_send_fn0(my_activity_id, src_place, e.arg(), e.arg_squash(), e.arg()).await; // macro 
+    execute_and_send_fn0(my_activity_id, waited, e.arg(), e.arg_squash(), e.arg()).await; // macro 
 }
 
-// the desugered at async
-fn async_create_for_fn_id_0(ctx: &mut Context, dst_place: Place, a: i32, b: A, c: i32) { // macro
-    let my_activity_id = ctx.spawn(place); // register to remote
+// the desugered at async and wait
+fn async_create_for_fn_id_0(ctx:&mut Context, dst_place: Place, a: i32, b: A, c: i32) -> impl future::Future<Output=A>{ // macro
+    let my_activity_id = ctx.spawn(); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
-    let f = ctx.wait_single::<A>(my_activity_id); // macro
+    let f = wait_single::<A>(my_activity_id); // macro
     if dst_place == here {
-       let future = execute_and_send(my_activity_id, a, b, c); // macro
-       future.then(||f)
+       tokio::spwan(execute_and_send_fn0(my_activity_id, true, a, b, c)); // macro
+    } else {
+        let mut builder = SquashBufferItemBuilder::new(fn_id, dst_place, my_activity_id);
+        builder.arg(a); //  macro
+        builder.arg_squash(b); // macro
+        builder.arg(c); //macro
+        builder.waited();
+        let item = builder.build();
+        Context::send(item);
+    }
+    f
+}
+
+// the desugered at async no wait
+fn async_create_no_wait_for_fn_id_0(&mut ctx:Context, dst_place: Place, a: i32, b: A, c: i32) { // macro
+    let my_activity_id = ctx.spawn(); // register to remote
+    let fn_id: FunctionLabel = 0; // macro
+
+    if dst_place == here {
+        // no wait, set flag = flase
+       tokio::spwan(execute_and_send_fn0(my_activity_id, false, a, b, c)); // macro
     } else {
         let mut builder = SquashBufferItemBuilder::new(fn_id, dst_place, my_activity_id);
         builder.arg(a); //  macro
         builder.arg_squash(b); // macro
         builder.arg(c); //macro
         let item = builder.build();
-        ctx.send(item);
+        Context::send(item);
     }
-    f
 }
 
 // desugered finish

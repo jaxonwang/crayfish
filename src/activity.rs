@@ -136,9 +136,10 @@ pub struct ReturnInfo {
 #[derive(Default, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StrippedTaskItem {
     fn_id: FunctionLabel,
-    place: Place, // before sending, it's dst place, after receive, it's src place
+    place: Place, // it's dst place, request place or return place
     activity_id: ActivityId,
     ret: Option<ReturnInfo>,
+    waited: bool, // indicating this activity is waited on the spawned place
     args: Vec<u8>,
 }
 
@@ -156,6 +157,9 @@ impl TaskItem{
     }
     pub fn activity_id(&self) -> ActivityId{
         self.inner.activity_id
+    }
+    pub fn is_waited(&self) -> bool{
+        self.inner.waited
     }
 }
 
@@ -246,6 +250,11 @@ impl TaskItemBuilder {
         self.next_label += 1;
         ret
     }
+
+    pub fn waited(&mut self) {
+        self.item.inner.waited = true;
+    }
+
     pub fn arg(&mut self, t: impl RemoteSend) {
         serialize_into(&mut self.item.inner.args, &t)
             .expect("Failed to serialize function argument");
@@ -420,6 +429,7 @@ pub mod test {
             inner: StrippedTaskItem {
                 fn_id: this.inner.fn_id,
                 place: this.inner.place,
+                waited: false,
                 activity_id: this.inner.activity_id,
                 ret: this.inner.ret.as_ref().map(|retinfo| ReturnInfo {
                     result: retinfo.result.clone(),
@@ -476,6 +486,7 @@ pub mod test {
                     fn_id: rng.gen(),
                     place: rng.gen(),
                     activity_id: rng.gen(),
+                    waited: false,
                     ret: Some(ReturnInfo {
                         result: Err(s),
                         sub_activities: (0..8).map(|_| rng.gen()).collect(),
