@@ -37,7 +37,3 @@ rand = { version = "0.8", features = ["std_rng"]}
 [[bin]]
 name = "hello_world"
 path = "examples/hello_world.rs"
-
-# [[bin]]
-# name = "tokio"
-# path = "examples/test_tokio.rs"
