@@ -44,35 +44,31 @@ pub fn init_task_item_channels() {
         channels.push((Some(task_tx), Some(task_rx), Some(wait_tx), Some(wait_rx)));
     }
 }
+type MaybeTaskChannel = (
+    Option<Sender<Box<TaskItem>>>,
+    Option<Receiver<Box<TaskItem>>>,
+);
+type TaskWaitChannels = Vec<(
+    Option<Sender<Box<TaskItem>>>,
+    Option<Receiver<Box<TaskItem>>>,
+    Option<Sender<Box<WaitRequest>>>,
+    Option<Receiver<Box<WaitRequest>>>, // a channel to send channel
+)>;
 
 // must access thess mutex in order
-static WORKER_TASK_QUEUE: Lazy<
-    Mutex<(
-        Option<Sender<Box<TaskItem>>>,
-        Option<Receiver<Box<TaskItem>>>,
-    )>,
-> = Lazy::new(|| Mutex::new((None, None)));
-static TASK_ITEM_CHANNELS: Lazy<
-    Mutex<
-        Vec<(
-            Option<Sender<Box<TaskItem>>>,
-            Option<Receiver<Box<TaskItem>>>,
-            Option<Sender<WaitRequest>>,
-            Option<Receiver<WaitRequest>>, // a channel to send channel
-        )>,
-    >,
-> = Lazy::new(|| Mutex::new(vec![]));
+static WORKER_TASK_QUEUE: Lazy<Mutex<MaybeTaskChannel>> = Lazy::new(|| Mutex::new((None, None)));
+static TASK_ITEM_CHANNELS: Lazy<Mutex<TaskWaitChannels>> = Lazy::new(|| Mutex::new(vec![]));
 
 #[derive(Debug)]
 enum WaitItem {
     One(ActivityId),
     All(ConcreteContext),
 }
-type WaitRequest = Box<(WaitItem, oneshot::Sender<Box<TaskItem>>)>;
+type WaitRequest = (WaitItem, oneshot::Sender<Box<TaskItem>>);
 
 thread_local! {
     static TASK_ITEM_SENDER: Cell<Option<Sender<Box<TaskItem>>>> = Cell::new(None);
-    static WAIT_SENDER: Cell<Option<Sender<WaitRequest>>> = Cell::new(None);
+    static WAIT_SENDER: Cell<Option<Sender<Box<WaitRequest>>>> = Cell::new(None);
 }
 
 fn get_task_item_sender_ref() -> &'static Sender<Box<TaskItem>> {
@@ -91,7 +87,7 @@ fn get_task_item_sender_ref() -> &'static Sender<Box<TaskItem>> {
     })
 }
 
-fn get_wait_request_sender_ref() -> &'static Sender<WaitRequest> {
+fn get_wait_request_sender_ref() -> &'static Sender<Box<WaitRequest>> {
     WAIT_SENDER.with(|s| {
         // TODO: dup code
         let maybe_ref: &Option<_> = unsafe { &*s.as_ptr() };
@@ -197,9 +193,10 @@ impl RemoteItemReceiver {
 #[derive(Debug)]
 pub struct ExecutionHub {
     task_item_receivers: Vec<Option<Receiver<Box<TaskItem>>>>,
-    wait_request_receivers: Vec<Option<Receiver<WaitRequest>>>,
+    wait_request_receivers: Vec<Option<Receiver<Box<WaitRequest>>>>,
     return_item_sender: FxHashMap<FinishId, oneshot::Sender<Box<TaskItem>>>,
     calling_trees: FxHashMap<FinishId, CallingTree>,
+    #[allow(clippy::vec_box)] // I think store a pointer is faster
     free_items: FxHashMap<FinishId, Vec<Box<TaskItem>>>, // all return value got
     single_wait_free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
     single_wait: FxHashMap<ActivityIdLower, oneshot::Sender<Box<TaskItem>>>,
@@ -217,6 +214,11 @@ impl ExecutionHubTrigger {
     }
 }
 
+impl Default for ExecutionHub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl ExecutionHub {
     pub fn new() -> Self {
         let worker_task_queue = {
@@ -266,7 +268,7 @@ impl ExecutionHub {
                     }
                 // waited by an all wait
                 } else if let Some(tree) = self.calling_trees.get_mut(&finish_id) {
-                    tree.activity_done(item);
+                    tree.activity_done(*item);
                     if tree.all_done() {
                         tree_all_done = true; // use another flag to pass borrow checker
                     }
@@ -282,7 +284,7 @@ impl ExecutionHub {
                 if tree_all_done {
                     let tree = self.calling_trees.remove(&finish_id).unwrap();
                     let sender = self.return_item_sender.remove(&finish_id).unwrap();
-                    Self::wait_all_finish_and_send_return(tree, sender);
+                    Self::calling_tree_complete_send_return(tree, sender);
                 }
             } else {
                 // is request
@@ -293,7 +295,10 @@ impl ExecutionHub {
         }
     }
 
-    fn wait_all_finish_and_send_return(tree: CallingTree, sender: oneshot::Sender<Box<TaskItem>>) {
+    fn calling_tree_complete_send_return(
+        tree: CallingTree,
+        sender: oneshot::Sender<Box<TaskItem>>,
+    ) {
         let mut b = TaskItemBuilder::new(0, 0, 0);
         match tree.panic_backtrace() {
             None => b.ret(Ok(())), // build an empty ret
@@ -305,7 +310,7 @@ impl ExecutionHub {
     }
 
     fn handle_wait_request(&mut self, wr: WaitRequest) {
-        let (w_item, w_sender) = *wr;
+        let (w_item, w_sender) = wr;
 
         match w_item {
             WaitItem::One(aid) => {
@@ -318,15 +323,15 @@ impl ExecutionHub {
             }
             WaitItem::All(ctx) => {
                 let finish_id = ctx.finish_id;
-                let mut new_tree = CallingTree::new(ctx.sub_activities.iter().cloned().collect());
+                let mut new_tree = CallingTree::new(ctx.sub_activities);
                 // if some free item already exist
-                if let Some(task_items) = self.free_items.remove(&ctx.finish_id) {
+                if let Some(task_items) = self.free_items.remove(&finish_id) {
                     for task_item in task_items {
-                        new_tree.activity_done(task_item);
+                        new_tree.activity_done(*task_item);
                     }
                 }
                 if new_tree.all_done() {
-                    Self::wait_all_finish_and_send_return(new_tree, w_sender);
+                    Self::calling_tree_complete_send_return(new_tree, w_sender);
                 } else {
                     self.calling_trees.insert(finish_id, new_tree);
                     self.return_item_sender.insert(finish_id, w_sender);
@@ -359,7 +364,7 @@ impl ExecutionHub {
                 let mut to_remove = false;
                 if let Some(r) = self.wait_request_receivers[i].as_ref() {
                     match r.try_recv() {
-                        Ok(wr) => self.handle_wait_request(wr),
+                        Ok(wr) => self.handle_wait_request(*wr),
                         Err(mpsc::TryRecvError::Empty) => (),
                         Err(mpsc::TryRecvError::Disconnected) => {
                             debug!("worker:{} wait_request_channel closed", i);

@@ -78,8 +78,8 @@ impl CallingTree {
         false
     }
 
-    pub fn activity_done(&mut self, item: Box<TaskItem>) {
-        let mut ex = TaskItemExtracter::new(*item);
+    pub fn activity_done(&mut self, item: TaskItem) {
+        let mut ex = TaskItemExtracter::new(item);
 
         let fn_id = ex.fn_id();
         let place = ex.place();
@@ -229,7 +229,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert!(tree.panic_backtrace().is_none());
@@ -239,7 +239,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
 
         assert!(tree.all_done());
@@ -259,7 +259,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert!(tree.panic_backtrace().is_none());
@@ -270,7 +270,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert_eq!(tree.panic_backtrace.len(), 10);
@@ -341,7 +341,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert!(tree.panic_backtrace().is_none());
@@ -350,7 +350,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert_eq!(tree.panic_backtrace.len(), 5);
@@ -368,7 +368,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert!(tree.panic_backtrace().is_none());
@@ -379,7 +379,7 @@ mod test {
         items.shuffle(&mut rng);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert_eq!(tree.panic_backtrace.len(), 5);
@@ -397,7 +397,7 @@ mod test {
         items.shuffle(&mut rng);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert_eq!(tree.panic_backtrace.len(), 7);
@@ -415,7 +415,7 @@ mod test {
         let mut tree = CallingTree::new(vec![1 as ActivityId]);
         for item in items {
             assert!(!tree.all_done());
-            tree.activity_done(item);
+            tree.activity_done(*item);
         }
         assert!(tree.all_done());
         assert_eq!(tree.panic_backtrace.len(), 6);
