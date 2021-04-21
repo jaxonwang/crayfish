@@ -1,6 +1,8 @@
 use crate::logging;
 use crate::logging::*;
+use bit_vec::BitVec;
 use gex_sys::*;
+use rustc::FxHashMap;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -13,6 +15,9 @@ use std::sync::mpsc;
 
 extern crate gex_sys;
 extern crate libc;
+extern crate rustc;
+
+type MessageId = usize;
 
 pub struct CommunicationContext<'a> {
     endpoint: gex_EP_t, // thread safe handler
@@ -35,8 +40,45 @@ pub struct CommunicationContext<'a> {
     local_rank: Rank,
     world_size: usize,
 
-    notifiers: Vec<mpsc::SyncSender<usize>>, // notify message sender all message fragment is sent
-    message_framgment_checker: Vec<(usize, BinaryHeap<Reverse<usize>>)>, // expecting, smallest received
+    message_buffers: FxHashMap<MessageId, FragmentBuffer>,
+}
+
+struct FragmentBuffer {
+    buffer: Vec<u8>,
+    fragment_size: usize,
+    contigunous_end: usize,
+    received_map: BitVec,
+}
+
+impl FragmentBuffer {
+    fn with_length(length: usize, fragment_size: usize) -> Self {
+        FragmentBuffer {
+            buffer: vec![0; length],
+            fragment_size,
+            contigunous_end: 0,
+            received_map: from_elem(length, false),
+        }
+    }
+
+    fn save(&mut self, offset: usize, data: &[u8]) {
+        if cfg!(debug_assertions) {
+            assert!(offset + data.len() <= self.buffer.len());
+            assert_eq!(offset % self.fragment_size, 0);
+            if offset + data.len() != self.buffer.len() {
+                assert_eq!(data.len(), self.fragment_size);
+            }
+        }
+        self.buffer[offset..].copy_from_slice(data);
+        debug_assert_eq!(self.received_map[offset / self.fragment_size], false);
+        self.received_map[offset / fragment_size] = true;
+        while self.contigunous_end < self.received_map.len() && self.received_map[contigunous_end] {
+            self.contigunous_end += 1
+        }
+    }
+
+    fn all_done(&self) -> bool {
+        self.contigunous_end == self.received_map.len()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -73,22 +115,17 @@ impl fmt::Display for Rank {
     }
 }
 
-union B128 {
-    u64_2: (u64, u64),
-    i32_4: (i32, i32, i32, i32),
+union B64 {
+    u64_1: u64,
+    i32_2: (i32, i32),
 }
 
-fn u64_2_to_i32_4(a: u64, b: u64) -> (i32, i32, i32, i32) {
-    unsafe { B128 { u64_2: (a, b) }.i32_4 }
+fn u64_to_i32_2(a: u64) -> (i32, i32) {
+    unsafe { B128 { u64_1: a }.i32_2 }
 }
 
-fn i32_4_to_u64_2(a: i32, b: i32, c: i32, d: i32) -> (u64, u64) {
-    unsafe {
-        B128 {
-            i32_4: (a, b, c, d),
-        }
-        .u64_2
-    }
+fn i32_2_to_u64(a: i32, b: i32) -> u64 {
+    unsafe { B64 { i32_2: (a, b) }.u64_1 }
 }
 
 // TODO: make this thread local and in refcell
@@ -124,6 +161,8 @@ fn _recv_long<const TEST_ON: usize>(
     b: gasnet_handlerarg_t,
     c: gasnet_handlerarg_t,
     d: gasnet_handlerarg_t,
+    e: gasnet_handlerarg_t,
+    f: gasnet_handlerarg_t,
 ) {
     let src = if TEST_ON == 0 {
         let t_info = gex_token_info(token);
@@ -131,18 +170,19 @@ fn _recv_long<const TEST_ON: usize>(
     } else {
         Rank::new(0)
     };
-    let (message_len, offset) = i32_4_to_u64_2(a, b, c, d);
-    let message_len: usize = message_len.try_into().unwrap();
-    let offset: usize = offset.try_into().unwrap();
-    let nbytes: usize = nbytes.try_into().unwrap();
+
+    let message_len = i32_2_to_u64(a, b) as usize;
+    let offset = i32_2_to_u64(c, d) as usize;
+    let message_id = i32_2_to_u64(e, f) as usize;
+    let nbytes: usize = nbytes as usize;
+    let buf = slice::from_raw_parts(
+        buf as *const u8,
+        nbytes,
+    );
 
     // trace!("long recv {} bytes from {} at mem {:?}", nbytes, src, buf);
 
-    let call_handler = || unsafe {
-        let buf = slice::from_raw_parts(
-            buf.offset(-(TryInto::<isize>::try_into(offset).unwrap())) as *const u8,
-            message_len,
-        );
+    let call_handler = |buf:&[u8]| unsafe {
         debug_assert!(
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
             "Context pointer is null"
@@ -153,46 +193,22 @@ fn _recv_long<const TEST_ON: usize>(
     if message_len == nbytes {
         // whole message received
         debug_assert!(offset == 0);
-        call_handler();
+        call_handler(buf);
         return; // send no reply if whole message
     }
     // now message is fragmented
     let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
-    let (ref mut expecting, ref mut heap) = context.message_framgment_checker[src.as_usize()];
-    heap.push(std::cmp::Reverse(offset));
-    loop {
-        // pop until mistach or empty
-        match heap.peek() {
-            None => break,
-            Some(Reverse(minimal)) if *minimal == *expecting => {
-                *expecting += context.max_global_long_request_len;
-                heap.pop();
-            }
-            _ => break,
-        }
-    }
-    if *expecting >= message_len {
-        debug_assert!(heap.is_empty());
-        *expecting = 0;
-        if TEST_ON == 0 {
-            gex_am_reply_short0(token, context.message_recv_reply_index); // reply earlier
-        }
-        call_handler();
-    }
-}
 
-/// when received reply from remote indicating the whole message is received
-extern "C" fn message_recv_reply(token: gex_Token_t) {
-    let t_info = gex_token_info(token);
-    let src = t_info.gex_srcrank as usize;
+    let &mut fg_buffer = context
+        .message_buffers
+        .entry(&message_id)
+        .or_insert(FragmentBuffer::with_length(message_len, nbytes));
+    fg_buffer.save(offset, buf);
 
-    let context: &CommunicationContext = unsafe { &*GLOBAL_CONTEXT_PTR };
-
-    use mpsc::TrySendError;
-    match context.notifiers[src].try_send(0) {
-        Ok(()) => (), // ok
-        Err(TrySendError::Full(_)) => panic!("should not be full"),
-        Err(TrySendError::Disconnected(_)) => panic!(),
+    if fg_buffer.all_done(){
+        let buf = &fg_buffer.buffer[..];
+        call_handler(buf);
+        context.message_buffers.remove(&message_id);
     }
 }
 
@@ -204,8 +220,10 @@ extern "C" fn recv_long(
     b: gasnet_handlerarg_t,
     c: gasnet_handlerarg_t,
     d: gasnet_handlerarg_t,
+    e: gasnet_handlerarg_t,
+    f: gasnet_handlerarg_t,
 ) {
-    _recv_long::<0>(token, buf, nbytes, a, b, c, d);
+    _recv_long::<0>(token, buf, nbytes, a, b, c, d, e, f);
 }
 type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Rank, &'b [u8]);
 
@@ -223,12 +241,7 @@ impl<'a> CommunicationContext<'a> {
         unsafe {
             tb.add_short_req(recv_short as *const (), 1, Some("justaname"));
             tb.add_medium_req(recv_medium as *const (), 0, Some("recv_medium"));
-            tb.add_long_req(recv_long as *const (), 4, Some("recv_long"));
-            tb.add_short_reply(
-                message_recv_reply as *const (),
-                0,
-                Some("message_recv_reply"),
-            );
+            tb.add_long_req(recv_long as *const (), 6, Some("recv_long"));
         }
 
         // register the table
@@ -250,8 +263,7 @@ impl<'a> CommunicationContext<'a> {
             message_recv_reply_index: tb[3].gex_index,
             local_rank: Rank::from_gex_rank(gax_system_query_jobrank()),
             world_size: gax_system_query_jobsize() as usize,
-            notifiers: vec![],
-            message_framgment_checker: vec![],
+            message_buffers: FxHashMap::default(),
         };
 
         logging::set_global_id(context.here().as_i32());
@@ -344,8 +356,8 @@ impl<'a> CommunicationContext<'a> {
 
         SingleSender {
             team: self.team,
+            next_message_id: 0,
             endpoints_data: self.endpoints_data.clone(),
-            sync_data,
             max_global_long_request_len: self.max_global_long_request_len,
             max_global_medium_request_len: self.max_global_medium_request_len,
             short_handler_index: self.short_handler_index,
@@ -367,16 +379,10 @@ impl<'a> CommunicationContext<'a> {
     }
 }
 
-struct SenderSync {
-    notifiee: mpsc::Receiver<usize>,
-    waiting_reply: RefCell<bool>,
-}
-
 pub struct SingleSender {
     team: gex_TM_t, // use arc to make sender Send
     endpoints_data: Vec<EndpointData>,
-    sync_data: Vec<SenderSync>,
-
+    next_message_id: usize,
     max_global_long_request_len: usize,
     max_global_medium_request_len: usize,
     short_handler_index: gex_AM_Index_t,
@@ -388,7 +394,7 @@ pub struct SingleSender {
 unsafe impl Send for SingleSender {}
 
 impl SingleSender {
-    pub fn send(&self, dst: Rank, message: &[u8]) {
+    pub fn send(&mut self, dst: Rank, message: &[u8]) {
         // NOTE: not thread safe!
         if message.len() < self.max_global_medium_request_len {
             unsafe {
@@ -412,44 +418,34 @@ impl SingleSender {
             );
 
             let dst_index = dst.as_usize();
-            let mut wait_ref = self.sync_data[dst_index].waiting_reply.borrow_mut();
-            if *wait_ref {
-                // block on channel
-                use mpsc::TryRecvError;
-                loop {
-                    match self.sync_data[dst_index].notifiee.try_recv() {
-                        // TODO: spin here need to rewrite.
-                        Err(TryRecvError::Disconnected) => {
-                            panic! {"should never disconnect when I am waiting a reply"}
-                        }
-                        Err(TryRecvError::Empty) => break,
-                        Ok(_) => (), // ok
-                    }
-                }
-            }
 
+            let message_id = self.next_message_id;
+            self.next_message_id += 1;
             let mut offset: usize = 0;
             let packet_size = self.max_global_long_request_len;
-            *wait_ref = message.len() > packet_size;
 
             while offset < message.len() {
-                let (a, b, c, d) = u64_2_to_i32_4(message.len() as u64, offset as u64);
+                let (a, b) = u64_to_i32_2(message.len() as u64);
+                let (c, d) = u64_to_i32_2(offset as u64);
+                let (e, f) = u64_to_i32_2(message_id as u64);
                 let send_slice = &message[offset..];
                 let send_size = usize::min(send_slice.len(), packet_size);
                 unsafe {
-                    gex_am_reqeust_long4(
+                    gex_am_reqeust_long6(
                         self.team,
                         dst.gex_rank(),
                         self.long_handler_index,
                         send_slice.as_ptr() as *const c_void,
                         send_size as size_t,
                         self.endpoints_data[dst.as_usize()].segment_addr,
-                        offset.try_into().unwrap(),
+                        0,
                         gex_event_group(), // non block
                         a,
                         b,
                         c,
                         d,
+                        e,
+                        f,
                     )
                 };
                 // trace!("send offset {} bytes {}", offset, send_size);
@@ -500,8 +496,7 @@ mod test {
             message_recv_reply_index: 0,
             local_rank: Rank::new(0),
             world_size: 0,
-            notifiers: vec![],
-            message_framgment_checker: vec![(0, BinaryHeap::new())],
+            message_buffers: FxHashMap::default()
         }
     }
     fn set_ptr(ctx: &mut CommunicationContext) {
