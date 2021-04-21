@@ -11,11 +11,8 @@ use crate::global_id::ActivityIdLower;
 use crate::global_id::ActivityIdMethods;
 use crate::logging::*;
 use crate::meta_data;
-use crate::place::Place;
 use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
 use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
 use std::any::Any;
 use std::cell::Cell;
 use std::sync::atomic::AtomicBool;
@@ -31,13 +28,13 @@ use tokio::sync::oneshot;
 extern crate futures;
 extern crate once_cell;
 
-fn init_worker_task_queue() {
+pub fn init_worker_task_queue() {
     let mut q = WORKER_TASK_QUEUE.lock().unwrap();
     let (task_tx, task_rx) = channel();
     *q = (Some(task_tx), Some(task_rx));
 }
 
-fn init_task_item_channels() {
+pub fn init_task_item_channels() {
     let mut channels = TASK_ITEM_CHANNELS.lock().unwrap();
     channels.clear();
     for _ in 0..*meta_data::NUM_CPUS {
@@ -203,7 +200,7 @@ pub struct ExecutionHub {
     wait_request_receivers: Vec<Option<Receiver<WaitRequest>>>,
     return_item_sender: FxHashMap<FinishId, oneshot::Sender<Box<TaskItem>>>,
     calling_trees: FxHashMap<FinishId, CallingTree>,
-    free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
+    free_items: FxHashMap<FinishId, Vec<Box<TaskItem>>>, // all return value got
     single_wait_free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
     single_wait: FxHashMap<ActivityIdLower, oneshot::Sender<Box<TaskItem>>>,
     stop: Arc<AtomicBool>,
@@ -275,7 +272,11 @@ impl ExecutionHub {
                     }
                 } else {
                     // not single wait not waited
-                    self.free_items.insert(activity_id.get_lower(), item);
+                    if let Some(task_items) = self.free_items.get_mut(&finish_id) {
+                        task_items.push(item);
+                    } else {
+                        self.free_items.insert(finish_id, vec![item]);
+                    }
                 }
                 // clean up and send back
                 if tree_all_done {
@@ -318,9 +319,9 @@ impl ExecutionHub {
             WaitItem::All(ctx) => {
                 let finish_id = ctx.finish_id;
                 let mut new_tree = CallingTree::new(ctx.sub_activities.iter().cloned().collect());
-                for sub_activity in ctx.sub_activities.iter() {
-                    // if some free item already exist
-                    if let Some(task_item) = self.free_items.remove(&sub_activity.get_lower()) {
+                // if some free item already exist
+                if let Some(task_items) = self.free_items.remove(&ctx.finish_id) {
+                    for task_item in task_items {
                         new_tree.activity_done(task_item);
                     }
                 }
@@ -387,13 +388,9 @@ impl ExecutionHub {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::global_id::test::global_id_reset_everything;
     use crate::global_id::test::TestGuardForStatic;
     use crate::global_id::*;
     use futures::executor;
-    use futures::task::Poll;
-    use std::pin::Pin;
-    use std::sync::MutexGuard;
     use std::thread;
     use std::time;
 
@@ -456,18 +453,18 @@ mod test {
     }
 
     struct ExecutorHubSetUp<'a> {
-        test_guard: RuntimeTestGuard<'a>,
+        _test_guard: RuntimeTestGuard<'a>,
         join_handle: Option<thread::JoinHandle<()>>,
         trigger: ExecutionHubTrigger,
     }
     impl<'a> ExecutorHubSetUp<'a> {
         fn new() -> Self {
-            let test_guard = RuntimeTestGuard::new();
+            let _test_guard = RuntimeTestGuard::new();
             let mut hub = ExecutionHub::new();
             let trigger = hub.get_trigger();
             let join_handle = Some(thread::spawn(move || hub.run()));
             ExecutorHubSetUp {
-                test_guard,
+                _test_guard,
                 trigger,
                 join_handle,
             }
@@ -498,7 +495,7 @@ mod test {
         ConcreteContext::send(builder.build_box());
     }
 
-    fn send_2_local_panic(aid: ActivityId, sub_activities: Vec<ActivityId>){
+    fn send_2_local_panic(aid: ActivityId, sub_activities: Vec<ActivityId>) {
         let here = global_id::here();
         let mut builder = TaskItemBuilder::new(0, here, aid);
         builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
@@ -510,7 +507,6 @@ mod test {
         builder.ret(j.join());
         builder.waited();
         ConcreteContext::send(builder.build_box());
-
     }
 
     fn send_2_squash_local<T: Squashable>(
@@ -530,8 +526,16 @@ mod test {
         ConcreteContext::send(builder.build_box());
     }
 
+    fn send_1_local(aid: ActivityId, sub_activities: Vec<ActivityId>) {
+        let here = global_id::here();
+        let mut builder = TaskItemBuilder::new(0, here, aid);
+        builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
+        builder.sub_activities(sub_activities);
+        ConcreteContext::send(builder.build_box());
+    }
+
     #[test]
-    fn test_single_wait_local_send_after_wait_no_panic() {
+    fn test_single_wait_local_send_after_wait() {
         let _e = ExecutorHubSetUp::new();
         // new context
         let mut ctx = ConcreteContext::new_frame();
@@ -554,12 +558,11 @@ mod test {
     }
 
     #[test]
-    fn test_single_wait_local_send_many_wait_no_panic() {
+    fn test_single_wait_local_send_many_wait() {
         use crate::activity::test::A; // TODO: write test utilities
         let _e = ExecutorHubSetUp::new();
         // new context
         let mut ctx = ConcreteContext::new_frame();
-        let here = global_id::here();
         let mut wait_these = vec![];
         let mut wait_squash = vec![];
         // prepare and send return
@@ -592,7 +595,6 @@ mod test {
         let _e = ExecutorHubSetUp::new();
         // new context
         let mut ctx = ConcreteContext::new_frame();
-        let here = global_id::here();
 
         let new_aid = ctx.spwan();
         let f = wait_single::<usize>(new_aid);
@@ -600,5 +602,52 @@ mod test {
 
         executor::block_on(f);
         executor::block_on(wait_all(ctx));
+    }
+
+    fn activity_tree(
+        ctx: &mut ConcreteContext,
+        current_depth: usize,
+        depth_max: usize,
+        degree: usize,
+        activities: &mut Vec<(ActivityId, Vec<ActivityId>)>,
+    ) {
+        for _ in 0..degree {
+            let new_aid = ctx.spwan();
+            if current_depth != depth_max {
+                let mut new_ctx = ConcreteContext::inherit(new_aid.get_finish_id());
+                activity_tree(
+                    &mut new_ctx,
+                    current_depth + 1,
+                    depth_max,
+                    degree,
+                    activities,
+                );
+                activities.push((new_aid, new_ctx.spwaned()));
+            } else {
+                activities.push((new_aid, vec![]));
+            }
+        }
+    }
+
+    #[test]
+    fn test_many_local() {
+        let _e = ExecutorHubSetUp::new();
+        // new context
+        let mut ctx = ConcreteContext::new_frame();
+        let mut activities: Vec<(ActivityId, Vec<ActivityId>)> = vec![];
+        activity_tree(&mut ctx, 0, 5, 3, &mut activities);
+
+        // should not return until
+        let can_ret = ShouldNotReturnUntil::new(move || executor::block_on(wait_all(ctx)));
+        let mut count = 0;
+        let total_num = activities.len();
+        for (aid, sub) in activities {
+            if count == total_num - 1 {
+                // set before the last
+                can_ret.can_return_now();
+            }
+            send_1_local(aid, sub);
+            count += 1;
+        }
     }
 }
