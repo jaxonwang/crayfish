@@ -16,6 +16,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Submodules
+      run: |
+        git submodule sync --recursive
+        git submodule update --init --force --recursive
     - name: Build
       run: cargo build -vv
     - name: Run tests
