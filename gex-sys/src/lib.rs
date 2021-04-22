@@ -115,6 +115,7 @@ impl Entrytable {
 
     pub unsafe fn add(
         &mut self,
+        index: gex_AM_Index_t,
         f: *const (),
         flags: gex_Flags_t,
         nargs: usize,
@@ -122,7 +123,7 @@ impl Entrytable {
     ) {
         let handler = std::mem::transmute::<*const (), extern "C" fn()>(f);
         let entry = gex_AM_Entry_t {
-            gex_index: 0,
+            gex_index: index,
             gex_fnptr: Some(handler),
             gex_flags: flags,
             gex_nargs: nargs as c_uint,
@@ -135,30 +136,62 @@ impl Entrytable {
         self.entries.push(entry);
     }
 
-    pub unsafe fn add_short_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
-        self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REQUEST, nargs, name);
+    pub unsafe fn add_short_req(
+        &mut self,
+        index: gex_AM_Index_t,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
+        self.add(
+            index,
+            f,
+            GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REQUEST,
+            nargs,
+            name,
+        );
     }
 
     pub unsafe fn add_medium_req(
         &mut self,
+        index: gex_AM_Index_t,
         f: *const (),
         nargs: usize,
         name: Option<&'static str>,
     ) {
-        self.add(f, GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REQUEST, nargs, name);
+        self.add(
+            index,
+            f,
+            GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REQUEST,
+            nargs,
+            name,
+        );
     }
 
-    pub unsafe fn add_long_req(&mut self, f: *const (), nargs: usize, name: Option<&'static str>) {
-        self.add(f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST, nargs, name);
+    pub unsafe fn add_long_req(
+        &mut self,
+        index: gex_AM_Index_t,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
+        self.add(
+            index,
+            f,
+            GEX_FLAG_AM_LONG | GEX_FLAG_AM_REQUEST,
+            nargs,
+            name,
+        );
     }
 
     pub unsafe fn add_short_reply(
         &mut self,
+        index: gex_AM_Index_t,
         f: *const (),
         nargs: usize,
         name: Option<&'static str>,
     ) {
-        self.add(f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REPLY, nargs, name);
+        self.add(index, f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REPLY, nargs, name);
     }
 }
 
@@ -393,14 +426,13 @@ pub fn gex_nbi_wait_am_lc() {
 pub fn gex_coll_barrier_nb(tm: gex_TM_t) -> gex_Event_t {
     unsafe { gex_Coll_BarrierNB_Wrap(tm, 0) }
 }
-pub fn gex_rma_putblocking(
+
+pub unsafe fn gex_rma_putblocking(
     tm: gex_TM_t,
     rank: gex_Rank_t,
     dest_addr: *mut ::std::os::raw::c_void,
     source_addr: *const ::std::os::raw::c_void,
     nbytes: size_t,
 ) {
-    unsafe {
         gex_RMA_PutBlocking_Wrap(tm, rank, dest_addr, source_addr, nbytes, 0);
-    }
 }

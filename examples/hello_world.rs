@@ -47,20 +47,22 @@ pub fn main() {
 
     let here = context.here();
     let world = context.world_size();
+    let coll = context.collective_operator();
 
     print_hostname();
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
-            let mut sender = sender;
+            let coll = coll;
+            let sender = sender;
             for p in 0..world {
-                sender.send(network::Rank::new(p as i32), &payload[..]);
+                sender.send(network::Rank::new(p as i32), payload.clone());
             }
             info!("before barrier");
             log::logger().flush();
-            sender.barrier();
+            coll.barrier();
             info!("after barrier");
             info!("send done to {}", here);
-            sender.send(here, done_mark);
+            sender.send(here, done_mark.to_vec());
         });
 
         let sleep_itval = time::Duration::from_millis(100);
