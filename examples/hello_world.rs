@@ -23,7 +23,7 @@ pub fn main() {
     let got = Arc::new(atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal::SIGQUIT, Arc::clone(&got)).unwrap();
 
-    let payload_len = 10000usize;
+    let payload_len = 9002usize;
     let payload: Vec<u8> = (0..payload_len).map(|a| (a % 256) as u8).collect();
     let done_mark = "done".as_bytes();
 
@@ -36,6 +36,7 @@ pub fn main() {
             return;
         }
         assert_eq!(buf, &payload[..]);
+        // assert_eq!(buf.len(), payload.len());
         info!("{} {} bytes from:{} ", a, buf.len(), src.as_i32());
     };
     logging::setup_logger().unwrap();
@@ -50,10 +51,7 @@ pub fn main() {
     print_hostname();
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
-            let sender = sender;
-            for p in 0..world {
-                sender.send(network::Rank::new(p as i32), &payload[..]);
-            }
+            let mut sender = sender;
             for p in 0..world {
                 sender.send(network::Rank::new(p as i32), &payload[..]);
             }

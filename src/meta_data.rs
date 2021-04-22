@@ -1,9 +1,7 @@
 extern crate num_cpus;
-extern crate lazy_static;
-use lazy_static::lazy_static;
+extern crate once_cell;
+use once_cell::sync::Lazy;
 
 pub const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
-lazy_static! {
-    pub static ref NUM_CPUS: usize = num_cpus::get();
-}
+pub static NUM_CPUS: Lazy<usize> = Lazy::new(||num_cpus::get());
