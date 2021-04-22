@@ -393,3 +393,14 @@ pub fn gex_nbi_wait_am_lc() {
 pub fn gex_coll_barrier_nb(tm: gex_TM_t) -> gex_Event_t {
     unsafe { gex_Coll_BarrierNB_Wrap(tm, 0) }
 }
+pub fn gex_rma_putblocking(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    dest_addr: *mut ::std::os::raw::c_void,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+) {
+    unsafe {
+        gex_RMA_PutBlocking_Wrap(tm, rank, dest_addr, source_addr, nbytes, 0);
+    }
+}

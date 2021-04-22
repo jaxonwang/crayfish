@@ -87,9 +87,17 @@ impl FragmentBuffer {
                 assert_eq!(data.len(), self.fragment_size);
             }
         }
-        error!("buf got {:?}", if data.len() > 10 {&data[..10]} else{data});
+        error!(
+            "buf got {:?}",
+            if data.len() > 10 { &data[..10] } else { data }
+        );
         self.buffer[offset..offset + data.len()].copy_from_slice(data);
-        error!("write offset {}, data size {}, buf {:?}", offset, data.len(), &self.buffer[..10]);
+        error!(
+            "write offset {}, data size {}, buf {:?}",
+            offset,
+            data.len(),
+            &self.buffer[..10]
+        );
         debug_assert_eq!(self.received_map[offset / self.fragment_size], false);
         self.received_map.set(offset / self.fragment_size, true);
         while self.contigunous_end < self.received_map.len()
@@ -175,10 +183,9 @@ trait RankFromToken {
 }
 
 fn _recv_long<T: RankFromToken>(
-    // TODO: change TEST_ON to a type
     token: gex_Token_t,
     buf: *const c_void,
-    nbytes: size_t,
+    _nbytes: size_t,
     a: gasnet_handlerarg_t,
     b: gasnet_handlerarg_t,
     c: gasnet_handlerarg_t,
@@ -192,9 +199,8 @@ fn _recv_long<T: RankFromToken>(
     let message_len = i32_2_to_u64(a, b) as usize;
     let offset = i32_2_to_u64(c, d) as usize;
     let message_id = i32_2_to_u64(e, f) as usize;
-    let nbytes: usize = nbytes as usize;
-    let buf = unsafe { slice::from_raw_parts(buf as *const u8, nbytes) };
-    error!("receve from src {} {:?}", src, if buf.len() > 10 {&buf[..10]} else{buf});
+    let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
+    let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
     // trace!("long recv {} bytes from {} at mem {:?}", nbytes, src, buf);
 
@@ -206,28 +212,24 @@ fn _recv_long<T: RankFromToken>(
         ((*GLOBAL_CONTEXT_PTR).message_handler)(src, buf);
     };
 
-    if message_len == nbytes {
+    if message_len <= chunk_size {
+        let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
         debug_assert!(offset == 0);
         call_handler(buf);
-        return; // send no reply if whole message
-    }
-    // now message is fragmented
-    let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
-
-    // the tail is received first
-    if offset + nbytes == message_len && !context.message_buffers[src_idx].contains_key(&message_id) {
-        context
-            .message_buffers[src_idx]
-            .insert(message_id, FragmentBuffer::with_tail(message_len, buf));
+        // TODO: send reply
         return;
     }
 
-    let fg_buffer = context
-        .message_buffers[src_idx]
+    // now message is fragmented
+
+    let buf = unsafe { slice::from_raw_parts(buf as *const u8, chunk_size) };
+    let buf = &buf[..usize::min(message_len - offset, chunk_size)];
+    let fg_buffer = context.message_buffers[src_idx]
         .entry(message_id)
-        .or_insert_with(|| FragmentBuffer::with_length(message_len, nbytes));
+        .or_insert_with(|| FragmentBuffer::with_length(message_len, chunk_size));
     fg_buffer.save(offset, buf);
+    // TODO: send reply
 
     if fg_buffer.all_done() {
         let buf = &fg_buffer.buffer[..];
@@ -419,28 +421,42 @@ impl SingleSender {
                 )
             };
         } else {
-            let chunk_size = self.endpoints_data[dst.as_usize()].segment_len;
-            assert!(
-                // TODO: support larger message
-                message.len() < chunk_size,
-                "Current impl limits msg.len:{} < chunk_size:{}",
-                message.len(),
-                chunk_size
-            );
-
             let message_id = self.next_message_id;
             self.next_message_id += 1;
             let mut offset: usize = 0;
+            let chunk_size = self.endpoints_data[dst.as_usize()].segment_len;
             let packet_size = self.max_global_long_request_len;
 
             while offset < message.len() {
+                // wait till last finished
+                let rest = &message[offset..];
+                let old_offset = offset;
+
+                if rest.len() > packet_size {
+                    let src_addr = message[packet_size..].as_ptr() as *const c_void;
+                    let dst_addr = unsafe {
+                        self.endpoints_data[dst.as_usize()]
+                            .segment_addr
+                            .offset(packet_size as isize)
+                    };
+                    let send_size = usize::min(rest.len() - packet_size, chunk_size);
+                    gex_rma_putblocking(
+                        self.team,
+                        dst.gex_rank(),
+                        dst_addr,
+                        src_addr,
+                        send_size as u64,
+                    );
+                    offset += send_size;
+                }
+
                 let (a, b) = u64_to_i32_2(message.len() as u64);
                 let (c, d) = u64_to_i32_2(offset as u64);
                 let (e, f) = u64_to_i32_2(message_id as u64);
-                let send_slice = &message[offset..];
+                let send_slice = &message[old_offset..];
                 let send_size = usize::min(send_slice.len(), packet_size);
+                #[rustfmt::skip]
                 unsafe {
-                    error!("buf to send{:?} to {}, send_size {}", if send_slice.len() > 10 {&send_slice[..10]} else{send_slice}, dst, send_size);
                     gex_am_reqeust_long6(
                         self.team,
                         dst.gex_rank(),
@@ -450,18 +466,13 @@ impl SingleSender {
                         self.endpoints_data[dst.as_usize()].segment_addr,
                         0,
                         gex_event_group(), // non block
-                        a,
-                        b,
-                        c,
-                        d,
-                        e,
-                        f,
+                        a, b, c, d, e, f,
                     )
                 };
                 // trace!("send offset {} bytes {}", offset, send_size);
                 offset += send_size;
+                gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
             }
-            gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
         }
     }
 
@@ -476,18 +487,23 @@ impl SingleSender {
 mod test {
 
     use super::*;
+    use once_cell::sync::Lazy;
     use rand::prelude::*;
     use std::ptr::null;
     use std::sync::atomic;
     use std::sync::atomic::Ordering;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
-    use once_cell::sync::Lazy;
+
+    const MAX_CHUNK_SIZE: usize = 100;
 
     fn fake_context<'a>(f: &'a mut MessageHandler) -> CommunicationContext<'a> {
         CommunicationContext {
             team: null::<*const ()>() as gex_TM_t,
-            endpoints_data: vec![],
+            endpoints_data: vec![EndpointData {
+                segment_addr: null_mut::<c_void>(),
+                segment_len: MAX_CHUNK_SIZE,
+            }],
             cmd_args: vec![],
             message_handler: f,
             segment_len: 0,
@@ -508,7 +524,7 @@ mod test {
     }
 
     type MessageCalls = Vec<(*const c_void, size_t, i32, i32, i32, i32, i32, i32)>;
-    fn generate_recv_calls(message_id:usize, fragment_size:usize, message_payload:&[u8])-> MessageCalls{
+    fn generate_recv_calls(message_id: usize, message_payload: &[u8]) -> MessageCalls {
         let mut calls = vec![];
         let mut offset: usize = 0;
         let message_len = message_payload.len();
@@ -517,7 +533,7 @@ mod test {
             let (c, d) = u64_to_i32_2(offset as u64);
             let (e, f) = u64_to_i32_2(message_id as u64);
             let buf = message_payload[offset..].as_ptr() as *const c_void;
-            let nbytes = usize::min(message_len - offset, fragment_size) as size_t;
+            let nbytes = usize::min(message_len - offset, MAX_CHUNK_SIZE) as size_t;
             calls.push((buf, nbytes, a, b, c, d, e, f));
             offset += nbytes as usize;
         }
@@ -534,16 +550,16 @@ mod test {
         }
     }
 
-    static CONTEXT_TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(||Mutex::new(false));
+    static CONTEXT_TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
-    struct ContextSetUp<'a>{
+    struct ContextSetUp<'a> {
         _guard: MutexGuard<'a, bool>,
-        ctx : CommunicationContext<'a>,
+        ctx: CommunicationContext<'a>,
     }
-    impl<'a> ContextSetUp<'a>{
-        fn new(callback:&'a mut MessageHandler) -> Self{
+    impl<'a> ContextSetUp<'a> {
+        fn new(callback: &'a mut MessageHandler) -> Self {
             let _guard = CONTEXT_TEST_LOCK.lock().unwrap();
-            let ret = ContextSetUp{
+            let ret = ContextSetUp {
                 _guard,
                 ctx: fake_context(callback),
             };
@@ -559,13 +575,10 @@ mod test {
         };
         let mut c = ContextSetUp::new(&mut callback);
         set_ptr(&mut c.ctx);
-        unsafe{
-        }
 
         let message_payload: Vec<u8> = vec![1; 1234];
-        let fragment_size = 10;
 
-        let mut calls = generate_recv_calls(1, fragment_size, &message_payload[..]);
+        let mut calls = generate_recv_calls(1, &message_payload[..]);
 
         let test_message_order = |calls: &MessageCalls| {
             called.store(false, Ordering::Relaxed);
@@ -592,22 +605,18 @@ mod test {
     }
 
     #[test]
-    fn test_many_long_receiver(){
+    fn test_many_long_receiver() {
         let mut rng = thread_rng();
-        let message_payload: Vec<u8> = (0..1234).map(|_|rng.gen()).collect();
+        let message_payload: Vec<u8> = (0..1234).map(|_| rng.gen()).collect();
         let mut callback = |_a: Rank, data: &[u8]| {
             assert_eq!(data, &message_payload[..]);
         };
         let mut c = ContextSetUp::new(&mut callback);
         set_ptr(&mut c.ctx);
-        unsafe{
-        }
-
-        let fragment_size = 10;
 
         let mut calls = vec![];
-        for i in 0..100{
-            calls.extend_from_slice(&generate_recv_calls(i, fragment_size, &message_payload[..])[..]);
+        for i in 0..100 {
+            calls.extend_from_slice(&generate_recv_calls(i, &message_payload[..])[..]);
         }
         calls.shuffle(&mut rng);
         for (buf, nbytes, a, b, c, d, e, f) in calls.clone() {
@@ -615,6 +624,23 @@ mod test {
             _recv_long::<FakeGetter>(
                 null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
         }
+    }
 
+    #[test]
+    fn test_short_long_receiver() {
+        let mut rng = thread_rng();
+        let message_payload: Vec<u8> = (0..50).map(|_| rng.gen()).collect();
+        let mut callback = |_a: Rank, data: &[u8]| {
+            assert_eq!(data, &message_payload[..]);
+        };
+        let mut c = ContextSetUp::new(&mut callback);
+        set_ptr(&mut c.ctx);
+
+        let calls = generate_recv_calls(3, &message_payload[..]);
+        assert_eq!(calls.len(), 1);
+        let (buf, nbytes, a, b, c, d, e, f) = calls[0];
+        #[rustfmt::skip]
+            _recv_long::<FakeGetter>(
+                null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
     }
 }
