@@ -393,12 +393,12 @@ impl ExecutionHub {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::activity::test::A;
     use crate::global_id::test::TestGuardForStatic;
     use crate::global_id::*;
     use futures::executor;
     use std::thread;
-    use std::time;
-    use crate::activity::test::A; // TODO: write test utilities
+    use std::time; // TODO: write test utilities
 
     struct RuntimeTestGuard<'a> {
         _guard: TestGuardForStatic<'a>,
@@ -600,13 +600,14 @@ mod test {
         let _e = ExecutorHubSetUp::new();
         // new context
         let mut ctx = ConcreteContext::new_frame();
-
+        std::panic::set_hook(Box::new(|_| {})); // silence backtrace
         let new_aid = ctx.spwan();
         let f = wait_single::<usize>(new_aid);
         send_2_local_panic(new_aid, vec![]);
 
         executor::block_on(f);
         executor::block_on(wait_all(ctx));
+        let _ = std::panic::take_hook();
     }
 
     fn activity_tree(
@@ -657,14 +658,14 @@ mod test {
     }
 
     #[test]
-    fn test_local_worker_task_queue(){
+    fn test_local_worker_task_queue() {
         let _e = ExecutorHubSetUp::new();
         let mut q = WORKER_TASK_QUEUE.lock().unwrap();
         let worker_receiver = q.1.take().unwrap();
         let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
         builder.arg(1usize);
         builder.arg(0.5f64);
-        builder.arg_squash(A{value:123});
+        builder.arg_squash(A { value: 123 });
         ConcreteContext::send(builder.build_box());
         let item = worker_receiver.recv().unwrap();
         let mut e = TaskItemExtracter::new(*item);
@@ -673,8 +674,10 @@ mod test {
         assert_eq!(e.activity_id(), 3);
         assert_eq!(e.arg::<usize>(), 1);
         assert_eq!(e.arg::<f64>(), 0.5);
-        assert_eq!(e.arg_squash::<A>(), A{value:123});
-        assert!(matches!(worker_receiver.try_recv().unwrap_err(), mpsc::TryRecvError::Empty));
-
+        assert_eq!(e.arg_squash::<A>(), A { value: 123 });
+        assert!(matches!(
+            worker_receiver.try_recv().unwrap_err(),
+            mpsc::TryRecvError::Empty
+        ));
     }
 }

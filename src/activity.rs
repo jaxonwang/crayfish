@@ -67,7 +67,7 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 // TODO: arrange squash
 
 #[derive(Default, Debug)]
-struct SquashBuffer {
+pub struct SquashBuffer {
     // TODO boxex
     items: Vec<StrippedTaskItem>,
     squashable_map: FxHashMap<TypeId, Vec<(PackedValue, OrderLabel)>>, // type id of squashable, must not contain empty vector
