@@ -526,6 +526,17 @@ int gex_AM_ReplyShort_Wrap0(gex_Token_t token, gex_AM_Index_t index,
                             gex_Flags_t flags) {
   return gex_AM_ReplyShort0(token, index, flags);
 }
+int gex_AM_ReplyMedium_Wrap0(gex_Token_t token, gex_AM_Index_t handler,
+                             const void *source_addr, size_t nbytes,
+                             gex_Event_t *lc_opt, gex_Flags_t flags){
+  return gex_AM_ReplyMedium(token, handler, (void *)source_addr, nbytes, lc_opt, flags);
+}
+int gex_AM_ReplyLong_Wrap0(gex_Token_t token, gex_AM_Index_t handler,
+                             const void *source_addr, size_t nbytes,
+                             void *dest_addr,
+                             gex_Event_t *lc_opt, gex_Flags_t flags){
+  return gex_AM_ReplyLong(token, handler, (void *)source_addr, nbytes, dest_addr, lc_opt, flags);
+}
 
 gex_Event_t gex_Coll_BarrierNB_Wrap(gex_TM_t tm, gex_Flags_t flags) {
   return gex_Coll_BarrierNB(tm, flags);

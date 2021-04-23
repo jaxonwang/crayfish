@@ -193,6 +193,38 @@ impl Entrytable {
     ) {
         self.add(index, f, GEX_FLAG_AM_SHORT | GEX_FLAG_AM_REPLY, nargs, name);
     }
+
+    pub unsafe fn add_medium_reply(
+        &mut self,
+        index: gex_AM_Index_t,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
+        self.add(
+            index,
+            f,
+            GEX_FLAG_AM_MEDIUM | GEX_FLAG_AM_REPLY,
+            nargs,
+            name,
+        );
+    }
+
+    pub unsafe fn add_long_reply(
+        &mut self,
+        index: gex_AM_Index_t,
+        f: *const (),
+        nargs: usize,
+        name: Option<&'static str>,
+    ) {
+        self.add(
+            index,
+            f,
+            GEX_FLAG_AM_LONG | GEX_FLAG_AM_REPLY,
+            nargs,
+            name,
+        );
+    }
 }
 
 pub fn gex_register_entries(ep: gex_EP_t, entries: &mut Entrytable) {
@@ -416,6 +448,42 @@ pub fn gex_am_reply_short0(token: gex_Token_t, handler: gex_AM_Index_t) {
     }
 }
 
+pub unsafe fn gex_am_reply_medium0(
+    token: gex_Token_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    lc_opt: *mut gex_Event_t,
+) {
+        assert_gasnet_ok(gex_AM_ReplyMedium_Wrap0(
+            token,
+            handler,
+            source_addr,
+            nbytes,
+            lc_opt,
+            0,
+        ));
+}
+
+pub unsafe fn gex_am_reply_long0(
+    token: gex_Token_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    dest_addr: *mut ::std::os::raw::c_void,
+    lc_opt: *mut gex_Event_t,
+) {
+        assert_gasnet_ok(gex_AM_ReplyLong_Wrap0(
+            token,
+            handler,
+            source_addr,
+            nbytes,
+            dest_addr,
+            lc_opt,
+            0,
+        ));
+}
+
 pub fn gex_nbi_wait_am_lc() {
     // wait am local complete
     unsafe {
@@ -434,5 +502,5 @@ pub unsafe fn gex_rma_putblocking(
     source_addr: *const ::std::os::raw::c_void,
     nbytes: size_t,
 ) {
-        gex_RMA_PutBlocking_Wrap(tm, rank, dest_addr, source_addr, nbytes, 0);
+    gex_RMA_PutBlocking_Wrap(tm, rank, dest_addr, source_addr, nbytes, 0);
 }

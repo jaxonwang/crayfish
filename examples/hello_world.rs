@@ -20,7 +20,7 @@ pub fn main() {
     let got = Arc::new(atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal::SIGQUIT, Arc::clone(&got)).unwrap();
 
-    let payload_len = 90020usize;
+    let payload_len = 9002usize;
     let payload: Vec<u8> = (0..payload_len).map(|a| (a % 256) as u8).collect();
 
 
@@ -42,20 +42,25 @@ pub fn main() {
     crossbeam::scope(|scope| {
         let mut context = context;
         context.init();
+        let coll = context.collective_operator();
         scope.spawn(|_| {
             let sender = sender;
+            let coll = coll;
             for p in 0..world {
                 if p != here.as_usize(){
                     sender.send(network::Rank::new(p as i32), payload.clone());
                 }
             }
             
-            // std::thread::sleep(std::time::Duration::from_millis(1000));
-            // for p in 0..world {
-            //     if p != here.as_usize(){
-            //         sender.send(network::Rank::new(p as i32), payload.clone());
-            //     }
-            // }
+            for i in 0..100{
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            for p in 0..world {
+                if p != here.as_usize(){
+                    sender.send(network::Rank::new(p as i32), payload.clone());
+                }
+            }
+            println!("sleep done");
             log::logger().flush();
         });
         context.run();

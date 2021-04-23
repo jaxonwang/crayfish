@@ -273,8 +273,15 @@ int gex_AM_RequestLong_Wrap6(gex_TM_t tm, gex_Rank_t rank,
                              gex_AM_Arg_t arg0, gex_AM_Arg_t arg1,
                              gex_AM_Arg_t arg2, gex_AM_Arg_t arg3,
                              gex_AM_Arg_t arg4, gex_AM_Arg_t arg5);
-int gex_AM_ReplyShort_Wrap0(gex_Token_t token, gex_AM_Index_t index,
+int gex_AM_ReplyShort_Wrap0(gex_Token_t token, gex_AM_Index_t handler,
                             gex_Flags_t flags);
+int gex_AM_ReplyMedium_Wrap0(gex_Token_t token, gex_AM_Index_t handler,
+                             const void *source_addr, size_t nbytes,
+                             gex_Event_t *lc_opt, gex_Flags_t flags);
+int gex_AM_ReplyLong_Wrap0(gex_Token_t token, gex_AM_Index_t handler,
+                             const void *source_addr, size_t nbytes,
+                             void *dest_addr,
+                             gex_Event_t *lc_opt, gex_Flags_t flags);
 
 // collective
 gex_Event_t gex_Coll_BarrierNB_Wrap(gex_TM_t tm, gex_Flags_t flags);
