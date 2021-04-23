@@ -255,6 +255,7 @@ extern "C" fn recv_long(
             Rank::from_gex_rank(t_info.gex_srcrank)
         }
         fn reply_short(token: gex_Token_t) {
+            info!("send reply back");
             gex_am_reply_short0(token, ACK_REPLY_INDEX);
         }
     }
@@ -268,7 +269,8 @@ extern "C" fn ack_reply(token: gex_Token_t) {
 
     let context: &CommunicationContext = unsafe { &*GLOBAL_CONTEXT_PTR };
 
-    context.ack_fragment_id[src].fetch_add(1, Ordering::Release);
+    let _a = context.ack_fragment_id[src].fetch_add(1, Ordering::Release);
+    info!("reply from {} ack added to {}", src, _a);
 }
 
 const MEDIUM_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8;
@@ -338,7 +340,7 @@ impl<'a> CommunicationContext<'a> {
         context
     }
 
-    pub fn run(&mut self) {
+    pub fn init(&mut self) {
         // the segment is devided into world_size chunks, reserved for each peer
         // init the segment
         // let seg_len: usize = 2 * 1024 * 1024 * 1024; // 2 GB
@@ -409,6 +411,12 @@ impl<'a> CommunicationContext<'a> {
             >(self);
         }
 
+        // in case some finish init fast and send message before the pointer is set
+        let event = gex_coll_barrier_nb(self.team);
+        gex_event_wait(event);
+    }
+
+    pub fn run(&mut self) {
         use mpsc::TryRecvError::*;
         // message loop
         loop {
@@ -418,9 +426,30 @@ impl<'a> CommunicationContext<'a> {
                 Err(Disconnected) => break,
             }
         }
+        debug!("Wait until all peers finish their message");
+        // std::thread::sleep(std::time::Duration::from_millis(10));
+        for _ in 0..100000{}
+
+        let event = gex_coll_barrier_nb(self.team);
+        gex_event_wait(event);
+
         info!("Shuting down network.");
     }
 
+    fn wait_send_handled(&self, dst_idx: usize) {
+        // loop until ack
+        while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
+            != self.sent_fragment_id[dst_idx]
+        { }
+    }
+
+    fn wait_all_send_handled(&self) {
+        for idx in 0..self.world_size {
+            if idx != self.local_rank.as_usize(){
+                self.wait_send_handled(idx);
+            }
+        }
+    }
     // interrupt safe, no malloc
     pub fn send(&mut self, dst: Rank, message: &[u8]) {
         // NOTE: not thread safe!
@@ -444,12 +473,15 @@ impl<'a> CommunicationContext<'a> {
             let packet_size = self.max_global_long_request_len;
 
             while offset < message.len() {
-                // loop until ack
-                while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
-                    != self.sent_fragment_id[dst_idx]
-                {}
-
                 // wait till last finished
+                let ha = format!(
+                    "send to {} ack now {}",
+                    dst_idx,
+                    self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
+                );
+                info!("{}", ha);
+                self.wait_send_handled(dst_idx);
+                info!("done: {}", ha);
                 let rest = &message[offset..];
                 let old_offset = offset;
 
@@ -471,7 +503,7 @@ impl<'a> CommunicationContext<'a> {
                 }
 
                 let (a0, a1) = u64_to_i32_2(message.len() as u64);
-                let (a2, a3) = u64_to_i32_2(offset as u64);
+                let (a2, a3) = u64_to_i32_2(old_offset as u64);
                 let (a4, a5) = u64_to_i32_2(message_id as u64);
                 let send_slice = &message[old_offset..];
                 let send_size = usize::min(send_slice.len(), packet_size);
