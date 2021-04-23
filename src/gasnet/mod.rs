@@ -1,19 +1,18 @@
 use crate::logging;
 use crate::logging::*;
 use bit_vec::BitVec;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use gex_sys::*;
 use std::convert::TryInto;
 use std::fmt;
 use std::os::raw::*;
-use std::ptr::null;
 use std::ptr::null_mut;
 use std::slice;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
-extern crate fxhash;
+extern crate rustc_hash;
 extern crate gex_sys;
 extern crate libc;
 
@@ -202,7 +201,7 @@ fn _recv_long<T: RankFromToken>(
     let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
     let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
-    // trace!("long recv {} bytes from {} at mem {:?}", nbytes, src, buf);
+    // debug!("long recv {} bytes from {} at mem {:?} {}", _nbytes, src, buf, chunk_size);
 
     let call_handler = |buf: &[u8]| unsafe {
         debug_assert!(
@@ -216,8 +215,8 @@ fn _recv_long<T: RankFromToken>(
         let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
         debug_assert!(offset == 0);
-        T::reply_short(token);
         call_handler(buf);
+        T::reply_short(token);
         return;
     }
 
@@ -229,13 +228,13 @@ fn _recv_long<T: RankFromToken>(
         .entry(message_id)
         .or_insert_with(|| FragmentBuffer::with_length(message_len, chunk_size));
     fg_buffer.save(offset, buf);
-    T::reply_short(token);
 
     if fg_buffer.all_done() {
         let buf = &fg_buffer.buffer[..];
         call_handler(buf);
         context.message_buffers[src_idx].remove(&message_id);
     }
+    T::reply_short(token);
 }
 
 extern "C" fn recv_long(
@@ -256,36 +255,20 @@ extern "C" fn recv_long(
             Rank::from_gex_rank(t_info.gex_srcrank)
         }
         fn reply_short(token: gex_Token_t) {
-        let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
-            info!("trying to send ack reply back");
-            let t_info = gex_token_info(token);
-            let src = Rank::from_gex_rank(t_info.gex_srcrank);
-            let data: Vec<u8> = (0..1000).map(|a|(a%255 )as u8).collect();
-            unsafe {
-                gex_am_reply_long0(
-                    token,
-                    ACK_REPLY_INDEX,
-                    data.as_ptr() as *const c_void,
-                    // data.len() as u64,
-                    0,
-                    context.endpoints_data[src.as_usize()].segment_addr,
-                    gex_event_now(),
-                );
-            }
+            gex_am_reply_short0(token, ACK_REPLY_INDEX);
         }
     }
     _recv_long::<Getter>(token, buf, nbytes, a0, a1, a2, a3, a4, a5);
 }
 
 /// when received reply from remote indicating the whole message is received
-extern "C" fn ack_reply(token: gex_Token_t, _buf: *const c_void, _nbytes: size_t) {
+extern "C" fn ack_reply(token: gex_Token_t) {
     let t_info = gex_token_info(token);
     let src = t_info.gex_srcrank as usize;
 
     let context: &CommunicationContext = unsafe { &*GLOBAL_CONTEXT_PTR };
 
     let _a = context.ack_fragment_id[src].fetch_add(1, Ordering::Release);
-    info!("reply from {} ack added to {}, datalen {}", src, _a, _nbytes);
 }
 
 const MEDIUM_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8;
@@ -306,7 +289,7 @@ fn prepare_entry_table() -> Entrytable {
             6,
             Some("recv_long"),
         );
-        tb.add_long_reply(
+        tb.add_short_reply(
             ACK_REPLY_INDEX,
             ack_reply as *const (),
             0,
@@ -442,8 +425,6 @@ impl<'a> CommunicationContext<'a> {
             }
         }
         debug!("Wait until all peers finish their message");
-        // std::thread::sleep(std::time::Duration::from_millis(10));
-        for _ in 0..100000 {}
 
         let event = gex_coll_barrier_nb(self.team);
         gex_event_wait(event);
@@ -453,18 +434,22 @@ impl<'a> CommunicationContext<'a> {
 
     fn wait_send_handled(&self, dst_idx: usize) {
         // loop until ack
+        // TODO: sleep
         while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
             != self.sent_fragment_id[dst_idx]
-        {}
-    }
-
-    fn wait_all_send_handled(&self) {
-        for idx in 0..self.world_size {
-            if idx != self.local_rank.as_usize() {
-                self.wait_send_handled(idx);
-            }
+        {
+            gasnet_ampoll();
         }
     }
+
+    // fn wait_all_send_handled(&self) {
+    //     for idx in 0..self.world_size {
+    //         if idx != self.local_rank.as_usize() {
+    //             self.wait_send_handled(idx);
+    //         }
+    //     }
+    // }
+
     // interrupt safe, no malloc
     pub fn send(&mut self, dst: Rank, message: &[u8]) {
         // NOTE: not thread safe!
@@ -489,14 +474,7 @@ impl<'a> CommunicationContext<'a> {
 
             while offset < message.len() {
                 // wait till last finished
-                let ha = format!(
-                    "send to {} ack now {}",
-                    dst_idx,
-                    self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
-                );
-                info!("{}", ha);
                 self.wait_send_handled(dst_idx);
-                info!("done: {}", ha);
                 let rest = &message[offset..];
                 let old_offset = offset;
 

@@ -546,3 +546,7 @@ gex_Event_t gex_Coll_BroadcastNB_Wrap(gex_TM_t tm, gex_Rank_t root,
                                       gex_Flags_t flags) {
   return gex_Coll_BroadcastNB(tm, root, dst, src, nbytes, flags);
 }
+
+int gasnet_AMPoll_Wrap (){
+    return gasnet_AMPoll(); 
+}

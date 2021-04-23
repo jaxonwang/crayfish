@@ -288,3 +288,4 @@ gex_Event_t gex_Coll_BarrierNB_Wrap(gex_TM_t tm, gex_Flags_t flags);
 gex_Event_t gex_Coll_BroadcastNB_Wrap(gex_TM_t tm, gex_Rank_t root, void *dst,
                                       const void *src, size_t nbytes,
                                       gex_Flags_t flags);
+int gasnet_AMPoll_Wrap ();

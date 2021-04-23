@@ -217,13 +217,7 @@ impl Entrytable {
         nargs: usize,
         name: Option<&'static str>,
     ) {
-        self.add(
-            index,
-            f,
-            GEX_FLAG_AM_LONG | GEX_FLAG_AM_REPLY,
-            nargs,
-            name,
-        );
+        self.add(index, f, GEX_FLAG_AM_LONG | GEX_FLAG_AM_REPLY, nargs, name);
     }
 }
 
@@ -455,14 +449,14 @@ pub unsafe fn gex_am_reply_medium0(
     nbytes: size_t,
     lc_opt: *mut gex_Event_t,
 ) {
-        assert_gasnet_ok(gex_AM_ReplyMedium_Wrap0(
-            token,
-            handler,
-            source_addr,
-            nbytes,
-            lc_opt,
-            0,
-        ));
+    assert_gasnet_ok(gex_AM_ReplyMedium_Wrap0(
+        token,
+        handler,
+        source_addr,
+        nbytes,
+        lc_opt,
+        0,
+    ));
 }
 
 pub unsafe fn gex_am_reply_long0(
@@ -473,15 +467,15 @@ pub unsafe fn gex_am_reply_long0(
     dest_addr: *mut ::std::os::raw::c_void,
     lc_opt: *mut gex_Event_t,
 ) {
-        assert_gasnet_ok(gex_AM_ReplyLong_Wrap0(
-            token,
-            handler,
-            source_addr,
-            nbytes,
-            dest_addr,
-            lc_opt,
-            0,
-        ));
+    assert_gasnet_ok(gex_AM_ReplyLong_Wrap0(
+        token,
+        handler,
+        source_addr,
+        nbytes,
+        dest_addr,
+        lc_opt,
+        0,
+    ));
 }
 
 pub fn gex_nbi_wait_am_lc() {
@@ -503,4 +497,10 @@ pub unsafe fn gex_rma_putblocking(
     nbytes: size_t,
 ) {
     gex_RMA_PutBlocking_Wrap(tm, rank, dest_addr, source_addr, nbytes, 0);
+}
+
+pub fn gasnet_ampoll() {
+    unsafe {
+        gasnet_AMPoll_Wrap();
+    }
 }
