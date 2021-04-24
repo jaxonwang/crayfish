@@ -595,7 +595,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn test_single_wait_local_should_panic() {
         let _e = ExecutorHubSetUp::new();
         // new context
@@ -605,9 +604,14 @@ mod test {
         let f = wait_single::<usize>(new_aid);
         send_2_local_panic(new_aid, vec![]);
 
-        executor::block_on(f);
-        executor::block_on(wait_all(ctx));
+        use std::panic::{self, AssertUnwindSafe};
+        // catch manually to avoid poison the lock
+        let ret = panic::catch_unwind(AssertUnwindSafe(move || {
+            executor::block_on(f);
+            executor::block_on(wait_all(ctx));
+        }));
         let _ = std::panic::take_hook();
+        assert!(ret.is_err());
     }
 
     fn activity_tree(
