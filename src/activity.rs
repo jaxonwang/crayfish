@@ -166,7 +166,8 @@ where
                     let type_id = u64_to_type_id(type_id);
                     let value: SquashedMapValue =
                         <Dp as SquashDispatch<SquashOneType>>::dispatch_deserialize_entry(
-                            type_id, &mut access,
+                            type_id,
+                            &mut access,
                         )?;
                     map.insert(type_id, value);
                 }
@@ -179,7 +180,7 @@ where
             _mark: PhantomData::default(),
         })?;
 
-        Ok(SquashedMapWrapper::<DpRoot>{
+        Ok(SquashedMapWrapper::<DpRoot> {
             m,
             ..Default::default()
         })
@@ -870,6 +871,7 @@ pub mod test {
         }
     }
 
+    #[derive(Serialize, Deserialize)]
     struct ConcreteDispatch {}
     impl<Op> SquashDispatch<Op> for ConcreteDispatch
     where
@@ -922,7 +924,7 @@ pub mod test {
         pub value: usize,
     }
 
-    #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+    #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
     pub struct AOut {
         last: usize,
         diffs: Vec<u8>,
@@ -951,7 +953,7 @@ pub mod test {
     struct B {
         value: u8,
     }
-    #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+    #[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
     struct BOut {
         list: Vec<u8>,
     }
@@ -1069,6 +1071,49 @@ pub mod test {
     }
 
     #[test]
+    pub fn test_squash_extract_serialize_desrialize_all() {
+        let mut rng = thread_rng();
+        // prepare a
+        let mut a_list: Vec<_> = (1..65).map(|value| A { value }).collect();
+        a_list.shuffle(&mut rng);
+        // prepare b
+        let mut b_list: Vec<_> = (0..64).map(|value| B { value }).collect();
+        b_list.shuffle(&mut rng);
+        let calls: Vec<_> = a_list
+            .into_iter()
+            .zip(b_list.into_iter())
+            .map(|(a, b)| (a, b, rng.gen()))
+            .collect();
+        let items: Vec<_> = calls
+            .iter()
+            .cloned()
+            .map(|(a, b, f)| crate_squash_item(a, b, f))
+            .collect();
+        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
+        for i in items {
+            buf.push(i)
+        }
+        buf.squash_all();
+        // serialize
+        let mut bytes = vec![0u8; 0];
+        serialize_into(&mut bytes, &buf).unwrap();
+        let mut buf: SquashBuffer<ConcreteDispatch> = deserialize_from(&bytes[..]).unwrap();
+        // after deserialize
+        buf.extract_all();
+
+        let mut out = vec![];
+        while let Some(i) = buf.pop() {
+            out.push(i);
+        }
+        let get_calls: Vec<_> = out
+            .into_iter()
+            .rev()
+            .map(|i| extract_squash_item(i))
+            .collect();
+        assert_eq!(calls, get_calls);
+    }
+
+    #[test]
     pub fn test_item_build_extract() {
         let mut rng = thread_rng();
         let fn_id: FunctionLabel = 567; // feed by macro
@@ -1159,6 +1204,55 @@ pub mod test {
             cast_panic_payload(result.unwrap_err()),
             format!("1{}", value)
         );
+    }
+
+    #[test]
+    pub fn test_serialzie_squashed_map() {
+        let mut map = SquashedMapWrapper::<ConcreteDispatch>::default();
+
+        // aout squash
+        let aout = AOut {
+            last: 12345,
+            diffs: (0..199u8).collect(),
+        };
+        let packed_a = Box::new(aout.clone()) as PackedValue;
+        let ord_a = (0..100).collect::<Vec<OrderLabel>>();
+        let a_type_id = TypeId::of::<A>();
+        map.insert(a_type_id, (packed_a, ord_a.clone()));
+
+        // bout squash
+        let bout = BOut {
+            list: (0..199u8).rev().collect(),
+        };
+        let packed_b = Box::new(bout.clone()) as PackedValue;
+        let ord_b = (0..100).rev().collect::<Vec<OrderLabel>>();
+        let b_type_id = TypeId::of::<B>();
+        map.insert(b_type_id, (packed_b, ord_b.clone()));
+
+        // serial & deserial
+        let mut bytes = vec![0u8; 0];
+        serialize_into(&mut bytes, &map).unwrap();
+        let mut map1: SquashedMapWrapper<ConcreteDispatch> = deserialize_from(&bytes[..]).unwrap();
+
+        // check aout
+        let (packed_a1, ord_a1) = map1.remove(&a_type_id).unwrap();
+        assert_eq!(
+            *packed_a1
+                .downcast_ref::<<A as Squashable>::Squashed>()
+                .unwrap(),
+            aout
+        );
+        assert_eq!(ord_a1, ord_a);
+
+        // check bout
+        let (packed_b1, ord_b1) = map1.remove(&b_type_id).unwrap();
+        assert_eq!(
+            *packed_b1
+                .downcast_ref::<<B as Squashable>::Squashed>()
+                .unwrap(),
+            bout
+        );
+        assert_eq!(ord_b1, ord_b);
     }
 }
 // fn user_func_A(a: A, b: B, c: i32) -> R {
