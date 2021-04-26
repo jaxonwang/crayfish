@@ -81,6 +81,8 @@ type SquashedMapValue = (PackedValue, Vec<OrderLabel>);
 type SquashedMap = FxHashMap<TypeId, SquashedMapValue>;
 type OrderedSquashable = Vec<(PackedValue, OrderLabel)>;
 
+// I write this wrapper to implement the serialization for squashbuffer
+// Certainly that this design is crap. But I can't find a better one
 #[derive(Debug)]
 struct SquashedMapWrapper<D> {
     _marker: PhantomData<D>,
@@ -352,141 +354,6 @@ fn type_id_to_u64(type_id: TypeId) -> u64 {
 fn u64_to_type_id(data: u64) -> TypeId {
     unsafe { std::mem::transmute::<u64, TypeId>(data) }
 }
-
-/*
-impl<D> Serialize for SquashBuffer<D>
-where
-    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        debug_assert!(self.squashable_map.is_empty());
-        debug_assert!(self.ordered_squashable.is_empty());
-
-        // item
-        let mut seq = serializer.serialize_seq(Some(self.items.len()))?;
-        for element in self.items.iter() {
-            seq.serialize_element(element)?;
-        }
-        seq.end()?;
-
-        // values
-        let mut map = serializer.serialize_map(Some(self.squashed_map.len()))?;
-        for (id, v) in self.squashed_map.iter() {
-            map.serialize_key(&type_id_to_u64(*id));
-            <D as SquashDispatch<SquashOneType>>::dispatch_serialize_entry(*id, &v.0, &mut map)
-                .unwrap();
-        }
-        map.end()?;
-
-        // orders
-        let mut map = serializer.serialize_map(Some(self.squashed_map.len()))?;
-        for (id, v) in self.squashed_map.iter() {
-            map.serialize_entry(&type_id_to_u64(*id), &v.1).unwrap();
-        }
-        map.end()
-
-    }
-}
-
-impl<'de, DpRoot> Deserialize<'de> for SquashBuffer<DpRoot>
-where
-    DpRoot: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct ValueMapVisitor<Dp> {
-            _mark: PhantomData<Dp>,
-        }
-
-        impl<'de, Dp> Visitor<'de> for ValueMapVisitor<Dp>
-        where
-            Dp: for<'a> SquashDispatch<SquashOneType<'a>>
-                + for<'a> SquashDispatch<ExtractOneType<'a>>,
-        {
-            type Value = FxHashMap<TypeId, PackedValue>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("packed value map")
-            }
-
-            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
-            where
-                M: MapAccess<'de>,
-            {
-                let mut map = FxHashMap::default();
-
-                while let Some(type_id) = access.next_key::<u64>()? {
-                    let type_id = u64_to_type_id(type_id);
-                    let packed = <Dp as SquashDispatch<SquashOneType>>::dispatch_deserialize_entry(
-                        type_id, access,
-                    )?;
-                    map.insert(type_id, packed);
-                }
-
-                Ok(map)
-            }
-        }
-
-        struct ItemsVisitor;
-        impl<'de> Visitor<'de> for ItemsVisitor{
-            type Value = Vec<StrippedTaskItem>;
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("deserialize item")
-            }
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-                where
-                    A: SeqAccess<'de>
-            {
-                let mut items = Self::Value::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(item) = seq.next_element::<StrippedTaskItem>()?{
-                    items.push(item);
-                }
-                Ok(items)
-            }
-        }
-
-        struct OrderMapVisitor;
-        impl<'de> Visitor<'de> for OrderMapVisitor{
-            type Value = FxHashMap<TypeId, Vec<OrderLabel>>;
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("deserialize order")
-            }
-            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
-            where
-                M: MapAccess<'de>,
-            {
-                let mut map = FxHashMap::default();
-                while let Some((type_id, ord)) = access.next_entry::<u64, Vec<OrderLabel>>()? {
-                    let type_id = u64_to_type_id(type_id);
-                    map.insert(type_id, ord);
-                }
-                Ok(map)
-            }
-        }
-
-        let items = deserializer.deserialize_seq(ItemsVisitor{})?;
-        let mut values = deserializer.deserialize_map(ValueMapVisitor::<DpRoot> {
-            _mark: PhantomData::default(),
-        })?;
-        let orders = deserializer.deserialize_map(OrderMapVisitor{})?;
-
-        let mut squashed_map = FxHashMap::default();
-        for (id, ord) in orders {
-            squashed_map.insert(id, (values.remove(&id).unwrap(), ord));
-        }
-
-        let mut buf = Self::default();
-        buf.items = items;
-        buf.squashed_map = squashed_map;
-        Ok(buf)
-    }
-}
-*/
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ReturnInfo {
