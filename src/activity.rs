@@ -4,10 +4,16 @@ use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
 use rustc_hash::FxHashMap;
 use serde::de::DeserializeOwned;
+use serde::de::MapAccess;
+use serde::de::Visitor;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::Serializer;
 use std::any::Any;
 use std::any::TypeId;
+use std::fmt;
+use std::marker::PhantomData;
 
 extern crate serde;
 
@@ -66,18 +72,42 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 // TODO: should impl serialize
 // TODO: arrange squash
 
-#[derive(Default, Debug)]
-pub struct SquashBuffer {
+type SquashableMap = FxHashMap<TypeId, Vec<(PackedValue, OrderLabel)>>;
+type SquashedMap = FxHashMap<TypeId, (PackedValue, Vec<OrderLabel>)>;
+type OrderedSquashable = Vec<(PackedValue, OrderLabel)>;
+
+#[derive(Debug)]
+pub struct SquashBuffer<D> {
     // TODO boxex
     items: Vec<StrippedTaskItem>,
-    squashable_map: FxHashMap<TypeId, Vec<(PackedValue, OrderLabel)>>, // type id of squashable, must not contain empty vector
-    squashed_map: FxHashMap<TypeId, (PackedValue, Vec<OrderLabel>)>,   // type id of squashed, ditto
-    ordered_squashable: Vec<(PackedValue, OrderLabel)>, // still preserve label, for I don't want extra squash item struct
+    squashable_map: SquashableMap, // type id of squashable, must not contain empty vector
+    squashed_map: SquashedMap,     // type id of squashed, ditto
+    ordered_squashable: OrderedSquashable, // still preserve label, for I don't want extra squash item struct
+    _marker: PhantomData<D>,
 }
 
-impl SquashBuffer {
+impl<D> SquashBuffer<D>
+where
+    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+{
+
+    pub fn new() -> Self{
+        Self::default()
+    }
+
+    pub fn default() -> Self{
+        // derive default requrie D to be default, so here manually implement
+        SquashBuffer::<D>{
+            items: vec![],
+            squashable_map: SquashableMap::default(),
+            squashed_map: SquashedMap::default(),
+            ordered_squashable: OrderedSquashable::default(),
+            _marker: PhantomData::<D>::default()
+        }
+    }
+
     /// number of calls, used to determined when to send
-    pub fn calls_num(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.items.len()
     }
 
@@ -125,8 +155,141 @@ impl SquashBuffer {
             squashable,
         })
     }
+
+    fn squash_all(&mut self) {
+        let typeids: Vec<_> = self.squashable_map.keys().cloned().collect();
+        for typeid in typeids {
+            <D as SquashDispatch<SquashOneType>>::dispatch_for_squashable(
+                typeid,
+                (&mut self.squashable_map, &mut self.squashed_map),
+            );
+        }
+    }
+
+    fn extract_all(&mut self) {
+        let typeids: Vec<_> = self.squashed_map.keys().cloned().collect();
+        for typeid in typeids {
+            <D as SquashDispatch<ExtractOneType>>::dispatch_for_squashable(
+                typeid,
+                (&mut self.squashed_map, &mut self.ordered_squashable),
+            );
+        }
+        self.ordered_squashable.sort_unstable_by_key(|x| (*x).1);
+    }
 }
 
+/*
+impl Serialize for SquashBuffer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        debug_assert!(self.squashable_map.is_empty());
+        debug_assert!(self.ordered_squashable.is_empty());
+        self.items.serialize(serializer)?;
+
+        let mut map = serializer.serialize_map(Some(self.squashed_map.len()))?;
+        for (id, v) in self.squashed_map.len() {
+            map.serialize_entry(id, v)?;
+        }
+        map.end()
+    }
+}
+
+fn deserialize_pack<T>(type_id: TypeId, aceess: M) -> Result<(PackedValue, Vec<OrderLabel>), D::Error>
+where
+    M: MapAccess,
+    T: Squashable,
+{
+}
+
+struct DeserializeBuffer<'de, M> where M:MapAccess<'de>{
+    phantom: PhantomData<M>,
+}
+
+impl<'de, M> SquashOperation for DeserializeBuffer<'de, M> where M:MapAccess<'de>{
+    type DataType = M;
+    type ReturnType = Result<PackedValue, Vec<OrderLabel>>;
+    fn call<T: Squashable>(access: Self::DataType) -> Self::ReturnType {
+        let (v, s) = args;
+        let (v, labels) = access.next_value::<(T::Squashed, Vec<OrderLabel>)>()?;
+        Ok((Box::new(v) as PackedValue, labels))
+    }
+}
+
+// impl<'de> Deserialize<'de> for SquashBuffer {
+fn deserialize<T, D>(deserializer: D) -> Result<SquashBuffer, D::Error>
+where
+    D: Deserializer<'de>,
+    T: SquashDispatch<DeserializeBuffer<>>
+{
+    let items = Vec::<StrippedTaskItem>::deserialize(deserializer);
+
+    struct MapVisitor;
+    impl<'de> Visitor<'de> for MapVisitor {
+        type Value = FxHashMap<TypeId, (PackedValue, Vec<OrderLabel>)>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("packed value map")
+        }
+
+        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut map = FxHashMap::with_capacity(access.size_hint().unwrap_or(0));
+
+            while let Some(type_id) = access.next_key()? {
+                let packed = deserialize_pack(type_id, access);
+                let packed =
+                map.insert(type_id, packed);
+            }
+
+            Ok(map)
+        }
+    }
+    let squashed_map = deserializer.deserialize_map(MapVisitor {});
+    SquashBuffer {
+        items,
+        squashable_map: FxHashMap::default(),
+        squashed_map,
+        ordered_squashable: FxHashMap::default(),
+    }
+}
+// }
+
+impl Serialize for PackedValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serialize_squashed::<Something, S>(&self, serializer);
+    }
+}
+
+struct SerializeSquash<'a, S: Serializer> {
+    phantom: PhantomData<&'a S>,
+}
+
+impl<'a, S: Serializer> SquashOperation for SerializeSquash<'a, S> {
+    type DataType = (&'a PackedValue, S);
+    type ReturnType = Result<S::Ok, S::Error>;
+    fn call<T: Squashable>(args: Self::DataType) -> Self::ReturnType {
+        let (v, s) = args;
+        // current trait method has not ret, so I just unwrap here
+        v.downcast_ref::<T::Squashed>().serialize(s)
+    }
+}
+
+fn serialize_squashed<T, S>(packed: &PackedValue, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: for<'a> SquashDispatch<SerializeSquash<'a, S>>,
+{
+    T::dispatch_for_squashable(packed.type_id(), (packed, serializer));
+}
+
+*/
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ReturnInfo {
     result: ActivityResult,
@@ -148,17 +311,17 @@ pub struct TaskItem {
     inner: StrippedTaskItem,
     squashable: Vec<(PackedValue, OrderLabel)>,
 }
-impl TaskItem{
+impl TaskItem {
     pub fn is_ret(&self) -> bool {
         self.inner.ret.is_some()
     }
-    pub fn place(&self) -> Place{
+    pub fn place(&self) -> Place {
         self.inner.place
     }
-    pub fn activity_id(&self) -> ActivityId{
+    pub fn activity_id(&self) -> ActivityId {
         self.inner.activity_id
     }
-    pub fn is_waited(&self) -> bool{
+    pub fn is_waited(&self) -> bool {
         self.inner.waited
     }
 }
@@ -175,7 +338,7 @@ impl TaskItemExtracter {
     }
     pub fn arg<T: RemoteSend>(&mut self) -> T {
         let mut read = &self.item.inner.args[self.position..];
-        let t = deserialize_from(&mut read).expect("Failed to deserizalize function argument");
+        let t = deserialize_from(&mut read).expect("Failed to deserialize function argument");
         self.position =
             unsafe { read.as_ptr().offset_from(self.item.inner.args.as_ptr()) as usize };
         t
@@ -313,44 +476,42 @@ impl TaskItemBuilder {
     }
 }
 
-trait SquashOperation {
-    type DataType;
-    fn call<T: Squashable>(buf: &mut Self::DataType);
-}
-
-struct SquashOneType;
-impl SquashOperation for SquashOneType {
-    type DataType = SquashBuffer;
-    fn call<T: Squashable>(buf: &mut Self::DataType) {
-        squash_one_type::<T>(buf);
-    }
-}
-
 // dispatch for different squash type of different squash operation
-trait SquashDispatch<Op: SquashOperation> {
-    fn dispatch_for_squashable(typeid: TypeId, t: &mut Op::DataType);
+pub trait SquashDispatch<Op: SquashOperation> {
+    fn dispatch_for_squashable(typeid: TypeId, t: Op::DataType) -> Op::ReturnType;
 }
 
-fn squash_all<T>(buf: &mut SquashBuffer)
-where
-    T: SquashDispatch<SquashOneType>,
-{
-    let typeids: Vec<_> = buf.squashable_map.keys().cloned().collect();
-    for typeid in typeids {
-        T::dispatch_for_squashable(typeid, buf);
+// I have to make these public, since Squashbuffer leaks them
+pub trait SquashOperation {
+    type DataType;
+    type ReturnType;
+    fn call<T: Squashable>(buf: Self::DataType) -> Self::ReturnType;
+}
+
+pub struct SquashOneType<'a> {
+    phantom: PhantomData<&'a usize>,
+}
+
+impl<'a> SquashOperation for SquashOneType<'a> {
+    type DataType = (&'a mut SquashableMap, &'a mut SquashedMap);
+    type ReturnType = ();
+    // here pass by map ref tuple instead of squashmap to avoid recursive type
+    fn call<T: Squashable>(args: Self::DataType) -> Self::ReturnType {
+        squash_one_type::<T>(args);
     }
 }
 
-fn squash_one_type<T: Squashable>(buf: &mut SquashBuffer) {
+fn squash_one_type<T: Squashable>(args: (&mut SquashableMap, &mut SquashedMap)) {
+    let (squashable_map, squashed_map) = args;
     let typeid = TypeId::of::<T>();
-    let to_squash = buf.squashable_map.remove(&typeid).unwrap();
+    let to_squash = squashable_map.remove(&typeid).unwrap();
     let to_squash: Vec<_> = to_squash
         .into_iter()
         .map(|(s, a)| (s.downcast::<T>().unwrap(), a))
         .collect();
     let (a, b) = squash::<T>(to_squash);
     let a = a as PackedValue;
-    buf.squashed_map.insert(
+    squashed_map.insert(
         typeid,
         (a, b), // squash::<T>(to_squash) as (PackedValue, Vec<OrderLabel>),
     );
@@ -370,30 +531,23 @@ fn squash<T: Squashable>(
     (squashed, labels)
 }
 
-struct ExtractOneType;
-impl SquashOperation for ExtractOneType {
-    type DataType = SquashBuffer;
-    fn call<T: Squashable>(buf: &mut Self::DataType) {
-        extract_one_type::<T>(buf);
+pub struct ExtractOneType<'a> {
+    phantom: PhantomData<&'a usize>,
+}
+impl<'a> SquashOperation for ExtractOneType<'a> {
+    type DataType = (&'a mut SquashedMap, &'a mut OrderedSquashable);
+    type ReturnType = ();
+    fn call<T: Squashable>(args: Self::DataType) -> Self::ReturnType {
+        extract_one_type::<T>(args);
     }
 }
 
-fn extract_all<T>(buf: &mut SquashBuffer)
-where
-    T: SquashDispatch<ExtractOneType>,
-{
-    let typeids: Vec<_> = buf.squashed_map.keys().cloned().collect();
-    for typeid in typeids {
-        T::dispatch_for_squashable(typeid, buf);
-    }
-    buf.ordered_squashable.sort_unstable_by_key(|x| (*x).1);
-}
-
-fn extract_one_type<T: Squashable>(buf: &mut SquashBuffer) {
+fn extract_one_type<T: Squashable>(args: (&mut SquashedMap, &mut OrderedSquashable)) {
+    let (squashed_map, ordered_squashable) = args;
     let typeid = TypeId::of::<T>();
-    let (packed, labels) = buf.squashed_map.remove(&typeid).unwrap();
+    let (packed, labels) = squashed_map.remove(&typeid).unwrap();
     let packed = packed.downcast::<T::Squashed>().unwrap();
-    extract_into::<T>((packed, labels), &mut buf.ordered_squashable);
+    extract_into::<T>((packed, labels), ordered_squashable);
 }
 
 fn extract_into<T: Squashable>(
@@ -471,7 +625,7 @@ pub mod test {
     use rand::distributions::Alphanumeric;
     #[test]
     pub fn test_squashbuffer_push_pop() {
-        let mut buf = SquashBuffer::default();
+        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
         let mut rng = thread_rng();
         let mut items: Vec<TaskItem> = vec![];
         for _ in 0..50 {
@@ -510,13 +664,16 @@ pub mod test {
     where
         Op: SquashOperation,
     {
-        fn dispatch_for_squashable(typeid: TypeId, t: &mut Op::DataType) {
-            if typeid == TypeId::of::<A>() {
-                Op::call::<A>(t);
-            } else if typeid == TypeId::of::<B>() {
-                Op::call::<B>(t);
+        fn dispatch_for_squashable(typeid: TypeId, t: Op::DataType) -> Op::ReturnType {
+            if typeid == TypeId::of::<A>() || typeid == TypeId::of::<<A as Squashable>::Squashed>()
+            {
+                Op::call::<A>(t)
+            } else if typeid == TypeId::of::<B>()
+                || typeid == TypeId::of::<<B as Squashable>::Squashed>()
+            {
+                Op::call::<B>(t)
             } else {
-                panic!();
+                panic!()
             }
         }
     }
@@ -653,12 +810,12 @@ pub mod test {
             .cloned()
             .map(|(a, b, f)| crate_squash_item(a, b, f))
             .collect();
-        let mut buf = SquashBuffer::default();
+        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
         for i in items {
             buf.push(i)
         }
-        squash_all::<ConcreteDispatch>(&mut buf);
-        extract_all::<ConcreteDispatch>(&mut buf);
+        buf.squash_all();
+        buf.extract_all();
 
         let mut out = vec![];
         while let Some(i) = buf.pop() {
