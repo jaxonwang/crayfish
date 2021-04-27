@@ -85,20 +85,14 @@ type OrderedSquashable = Vec<(PackedValue, OrderLabel)>;
 // Certainly that this design is crap. But I can't find a better one
 #[derive(Debug)]
 struct SquashedMapWrapper<D> {
-    _marker: PhantomData<D>,
+    _mark: PhantomData<D>,
     m: SquashedMap,
-}
-
-impl<D> SquashedMapWrapper<D> {
-    fn new() -> Self {
-        Self::default()
-    }
 }
 
 impl<D> Default for SquashedMapWrapper<D> {
     fn default() -> Self {
         SquashedMapWrapper {
-            _marker: PhantomData::<D>::default(),
+            _mark: PhantomData::<D>::default(),
             m: FxHashMap::default(),
         }
     }
@@ -117,9 +111,15 @@ impl<D> DerefMut for SquashedMapWrapper<D> {
     }
 }
 
+// stupid traits
+pub trait ProperDispatcher:
+    for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>
+{
+}
+
 impl<D> Serialize for SquashedMapWrapper<D>
 where
-    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+    D: ProperDispatcher,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -137,7 +137,7 @@ where
 
 impl<'de, DpRoot> Deserialize<'de> for SquashedMapWrapper<DpRoot>
 where
-    DpRoot: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+    DpRoot: ProperDispatcher,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -149,8 +149,7 @@ where
 
         impl<'de, Dp> Visitor<'de> for ValueMapVisitor<Dp>
         where
-            Dp: for<'a> SquashDispatch<SquashOneType<'a>>
-                + for<'a> SquashDispatch<ExtractOneType<'a>>,
+            Dp: ProperDispatcher + ProperDispatcher,
         {
             type Value = SquashedMap;
 
@@ -189,10 +188,25 @@ where
     }
 }
 
+pub trait AbstractSquashBuffer {
+    fn len(&self) -> usize;
+    fn push(&mut self, item: TaskItem);
+    fn pop(&mut self) -> Option<TaskItem>;
+    fn squash_all(&mut self);
+    fn extract_all(&mut self);
+    fn clear(&mut self);
+    fn serialize_and_clear(&mut self) -> Vec<u8>;
+}
+
+pub trait AbstractSquashBufferFactory {
+    fn new_buffer(&self) -> Box<dyn AbstractSquashBuffer>;
+    fn deserialize_from(&self, bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SquashBuffer<D>
 where
-    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+    D: ProperDispatcher,
 {
     // TODO boxex
     items: Vec<StrippedTaskItem>,
@@ -205,7 +219,7 @@ where
 
 impl<D> Default for SquashBuffer<D>
 where
-    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+    D: ProperDispatcher,
 {
     fn default() -> Self {
         SquashBuffer {
@@ -219,19 +233,23 @@ where
 
 impl<D> SquashBuffer<D>
 where
-    D: for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>,
+    D: ProperDispatcher,
 {
     pub fn new() -> Self {
         Self::default()
     }
-
+}
+impl<D> AbstractSquashBuffer for SquashBuffer<D>
+where
+    D: ProperDispatcher + DeserializeOwned + Serialize,
+{
     /// number of calls, used to determined when to send
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.items.len()
     }
 
     /// the label in squashable should be prepared by caller
-    pub fn push(&mut self, item: TaskItem) {
+    fn push(&mut self, item: TaskItem) {
         let mut item = item;
         // the label of a argument is always == fn_ids.len() - 1
         let next_label = (self.items.len() << ARGUMENT_ORDER_BITS) as OrderLabel;
@@ -253,7 +271,7 @@ where
         }
     }
 
-    pub fn pop(&mut self) -> Option<TaskItem> {
+    fn pop(&mut self) -> Option<TaskItem> {
         // the buffer must be in extracted state
         debug_assert!(self.squashable_map.is_empty());
         debug_assert!(self.squashed_map.is_empty());
@@ -294,6 +312,50 @@ where
             );
         }
         self.ordered_squashable.sort_unstable_by_key(|x| (*x).1);
+    }
+
+    fn clear(&mut self) {
+        self.items.clear();
+        self.squashable_map.clear();
+        self.squashed_map.clear();
+        self.ordered_squashable.clear();
+    }
+
+    fn serialize_and_clear(&mut self) -> Vec<u8> {
+        let mut bytes = vec![];
+        serialize_into(&mut bytes, self).unwrap();
+        self.clear();
+        bytes
+    }
+}
+
+pub struct SquashBufferFactory<D> {
+    _mark: PhantomData<D>,
+}
+
+impl<D> SquashBufferFactory<D> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<D> Default for SquashBufferFactory<D> {
+    fn default() -> Self {
+        SquashBufferFactory::<D> {
+            _mark: PhantomData::default(),
+        }
+    }
+}
+
+impl<D> AbstractSquashBufferFactory for SquashBufferFactory<D>
+where
+    D: ProperDispatcher + DeserializeOwned + Serialize + 'static,
+{
+    fn deserialize_from(&self, bytes: &[u8]) -> Box<dyn AbstractSquashBuffer> {
+        Box::new(deserialize_from::<&[u8], SquashBuffer<D>>(bytes).unwrap())
+    }
+    fn new_buffer(&self) -> Box<dyn AbstractSquashBuffer> {
+        Box::new(SquashBuffer::<D>::new())
     }
 }
 
@@ -560,7 +622,7 @@ pub trait SquashDispatch<Op: SquashOperation> {
         A: MapAccess<'de>;
 }
 
-// I have to make these public, since Squashbuffer leaks them
+// I have to make these public, since SquashBuffer leaks them
 pub trait SquashOperation {
     type DataType;
     type ReturnType;
@@ -740,6 +802,7 @@ pub mod test {
 
     #[derive(Serialize, Deserialize)]
     struct ConcreteDispatch {}
+    impl ProperDispatcher for ConcreteDispatch {}
     impl<Op> SquashDispatch<Op> for ConcreteDispatch
     where
         Op: SquashOperation,
@@ -1121,19 +1184,12 @@ pub mod test {
         );
         assert_eq!(ord_b1, ord_b);
     }
+
+    #[test]
+    pub fn test_buffer_factory() {
+        let f = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let f = f as Box<dyn AbstractSquashBufferFactory>;
+        let buffer = f.new_buffer();
+        assert_eq!(buffer.len(), 0);
+    }
 }
-// fn user_func_A(a: A, b: B, c: i32) -> R {
-//     println!("A {:?} B {:?} C {}", a, b, c);
-//     R { a, b, c }
-// }
-// fn user_func_B(a: A) -> A {
-//     println!("---- {:?}", a);
-//     a
-// }
-//
-// fn gen_func_A_call_push(a: A, b: B, c: i32) {
-//
-//     //      get lock
-//     //
-//     // buffer.a.push()
-// }
