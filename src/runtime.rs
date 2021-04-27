@@ -1,3 +1,5 @@
+use crate::activity::AbstractSquashBuffer;
+use crate::activity::AbstractSquashBufferFactory;
 use crate::activity::ActivityId;
 use crate::activity::RemoteSend;
 use crate::activity::Squashable;
@@ -15,6 +17,7 @@ use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::any::Any;
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
@@ -23,6 +26,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time;
 use tokio::sync::oneshot;
 
 extern crate futures;
@@ -182,11 +186,103 @@ pub async fn wait_all(ctx: ConcreteContext) {
 }
 
 #[derive(Debug)]
+
 struct RemoteItemReceiver {}
 
 impl RemoteItemReceiver {
-    fn recv(&self) -> Option<Box<TaskItem>> {
-        None // TODO:
+    fn recv(&mut self) -> Option<Box<TaskItem>> {
+        None
+    }
+}
+
+// I guess 1 ms is the RTT for ethernet
+const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
+// who will perfrom squash and inflate
+struct Distributor {
+    buffer_factory: Box<dyn AbstractSquashBufferFactory>,
+    out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
+    sender: Sender<Vec<u8>>,
+    receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
+    in_buffers: VecDeque<Box<dyn AbstractSquashBuffer>>,
+}
+
+impl Distributor {
+    fn new(
+        buffer_factory: Box<dyn AbstractSquashBufferFactory>,
+        world_size: usize,
+        sender: Sender<Vec<u8>>,
+        receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
+    ) -> Self {
+        let out_buffers: Vec<_> = (0..world_size)
+            .map(|_| (buffer_factory.new_buffer(), time::Instant::now()))
+            .collect();
+        Distributor {
+            buffer_factory,
+            out_buffers,
+            sender,
+            receiver,
+            in_buffers: VecDeque::with_capacity(512),
+        }
+    }
+
+    // will extract
+    fn recv(&mut self) -> Option<Box<TaskItem>> {
+        loop {
+            let front = match self.in_buffers.front_mut() {
+                None => match self.receiver.try_recv() {
+                    Ok(buffer) => {
+                        let mut buffer = buffer;
+                        buffer.extract_all();
+                        self.in_buffers.push_back(buffer);
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => return None,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        panic!("network recive channel closed")
+                    }
+                },
+                Some(f) => f,
+            };
+            let maybe_item = front.pop();
+            match maybe_item {
+                None => {
+                    // the head is empty now, pop it, and try next
+                    self.in_buffers.pop_front();
+                    continue;
+                }
+                Some(item) => return Some(Box::new(item)),
+            }
+        }
+    }
+
+    fn send(&mut self, item: Box<TaskItem>) {
+        // should never send to local, in my implementation
+        debug_assert!(item.place() != global_id::here());
+        let idx = item.place() as usize;
+        let dst_buffer = &mut self.out_buffers[idx];
+        if dst_buffer.0.is_empty() {
+            // touch the time when the first item comes in
+            dst_buffer.1 = time::Instant::now();
+        }
+        dst_buffer.0.push(*item);
+        self.poll_one(idx);
+    }
+
+    // check whether buffer is goint te be send will squash and send
+    fn poll_one(&mut self, idx: usize) {
+        let dst_buffer = &mut self.out_buffers[idx];
+        if dst_buffer.0.is_empty() || dst_buffer.1 + MAX_BUFFER_LIFETIME > time::Instant::now() {
+            return; // young enough, do nothing
+        }
+        dst_buffer.0.squash_all();
+        let bytes = dst_buffer.0.serialize_and_clear();
+        self.sender.send(bytes).unwrap();
+    }
+
+    fn poll(&mut self) {
+        for i in 0..self.out_buffers.len() {
+            self.poll_one(i);
+        }
     }
 }
 

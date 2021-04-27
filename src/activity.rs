@@ -113,7 +113,10 @@ impl<D> DerefMut for SquashedMapWrapper<D> {
 
 // stupid traits
 pub trait ProperDispatcher:
-    for<'a> SquashDispatch<SquashOneType<'a>> + for<'a> SquashDispatch<ExtractOneType<'a>>
+    for<'a> SquashDispatch<SquashOneType<'a>>
+    + for<'a> SquashDispatch<ExtractOneType<'a>>
+    + Send
+    + 'static
 {
 }
 
@@ -188,8 +191,9 @@ where
     }
 }
 
-pub trait AbstractSquashBuffer {
+pub trait AbstractSquashBuffer: Send {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
     fn push(&mut self, item: TaskItem);
     fn pop(&mut self) -> Option<TaskItem>;
     fn squash_all(&mut self);
@@ -198,7 +202,7 @@ pub trait AbstractSquashBuffer {
     fn serialize_and_clear(&mut self) -> Vec<u8>;
 }
 
-pub trait AbstractSquashBufferFactory {
+pub trait AbstractSquashBufferFactory: Send {
     fn new_buffer(&self) -> Box<dyn AbstractSquashBuffer>;
     fn deserialize_from(&self, bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
 }
@@ -246,6 +250,10 @@ where
     /// number of calls, used to determined when to send
     fn len(&self) -> usize {
         self.items.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// the label in squashable should be prepared by caller
@@ -329,6 +337,7 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SquashBufferFactory<D> {
     _mark: PhantomData<D>,
 }
