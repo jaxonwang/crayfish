@@ -872,7 +872,6 @@ pub mod test {
     impl Squashable for A {
         type Squashed = AOut;
         fn fold(&self, acc: &mut Self::Squashed) {
-            println!("fold {} {}", self.value, acc.last);
             assert!(acc.last <= self.value);
             acc.diffs.push((self.value - acc.last).try_into().unwrap());
             acc.last = self.value;

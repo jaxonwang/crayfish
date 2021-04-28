@@ -185,14 +185,10 @@ pub async fn wait_all(ctx: ConcreteContext) {
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-#[derive(Debug)]
-
-struct RemoteItemReceiver {}
-
-impl RemoteItemReceiver {
-    fn recv(&mut self) -> Option<Box<TaskItem>> {
-        None
-    }
+pub trait AbstractDistributor {
+    fn recv(&mut self) -> Option<Box<TaskItem>>;
+    fn send(&mut self, item: Box<TaskItem>);
+    fn poll(&mut self);
 }
 
 // I guess 1 ms is the RTT for ethernet
@@ -225,6 +221,19 @@ impl Distributor {
         }
     }
 
+    // check whether buffer is goint te be send will squash and send
+    fn poll_one(&mut self, idx: usize) {
+        let dst_buffer = &mut self.out_buffers[idx];
+        if dst_buffer.0.is_empty() || dst_buffer.1 + MAX_BUFFER_LIFETIME > time::Instant::now() {
+            return; // young enough, do nothing
+        }
+        dst_buffer.0.squash_all();
+        let bytes = dst_buffer.0.serialize_and_clear();
+        self.sender.send(bytes).unwrap();
+    }
+}
+
+impl AbstractDistributor for Distributor {
     // will extract
     fn recv(&mut self) -> Option<Box<TaskItem>> {
         loop {
@@ -233,6 +242,7 @@ impl Distributor {
                     // in buffers are emtpy, try to receive new squash buffers
                     Ok(buffer) => {
                         let mut buffer = buffer;
+                        debug_assert!(!buffer.is_empty());
                         buffer.extract_all();
                         self.in_buffers.push_back(buffer);
                         continue;
@@ -270,17 +280,6 @@ impl Distributor {
         self.poll_one(idx);
     }
 
-    // check whether buffer is goint te be send will squash and send
-    fn poll_one(&mut self, idx: usize) {
-        let dst_buffer = &mut self.out_buffers[idx];
-        if dst_buffer.0.is_empty() || dst_buffer.1 + MAX_BUFFER_LIFETIME > time::Instant::now() {
-            return; // young enough, do nothing
-        }
-        dst_buffer.0.squash_all();
-        let bytes = dst_buffer.0.serialize_and_clear();
-        self.sender.send(bytes).unwrap();
-    }
-
     fn poll(&mut self) {
         for i in 0..self.out_buffers.len() {
             self.poll_one(i);
@@ -289,7 +288,10 @@ impl Distributor {
 }
 
 #[derive(Debug)]
-pub struct ExecutionHub {
+pub struct _ExecutionHub<D>
+where
+    D: AbstractDistributor,
+{
     task_item_receivers: Vec<Option<Receiver<Box<TaskItem>>>>,
     wait_request_receivers: Vec<Option<Receiver<Box<WaitRequest>>>>,
     return_item_sender: FxHashMap<FinishId, oneshot::Sender<Box<TaskItem>>>,
@@ -299,9 +301,11 @@ pub struct ExecutionHub {
     single_wait_free_items: FxHashMap<ActivityIdLower, Box<TaskItem>>, // all return value got
     single_wait: FxHashMap<ActivityIdLower, oneshot::Sender<Box<TaskItem>>>,
     stop: Arc<AtomicBool>,
-    remote_item_receiver: RemoteItemReceiver,
+    distributor: D,
     worker_task_queue: Sender<Box<TaskItem>>,
 }
+
+type ExecutorHub = _ExecutionHub<Distributor>;
 
 pub struct ExecutionHubTrigger {
     stop: Arc<AtomicBool>,
@@ -312,18 +316,16 @@ impl ExecutionHubTrigger {
     }
 }
 
-impl Default for ExecutionHub {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl ExecutionHub {
-    pub fn new() -> Self {
+impl<D> _ExecutionHub<D>
+where
+    D: AbstractDistributor,
+{
+    pub fn new(distributor: D) -> Self {
         let worker_task_queue = {
             let mut q = WORKER_TASK_QUEUE.lock().unwrap();
             q.0.take().unwrap()
         };
-        let mut hub = ExecutionHub {
+        let mut hub = _ExecutionHub {
             task_item_receivers: vec![],
             wait_request_receivers: vec![],
             return_item_sender: FxHashMap::default(),
@@ -332,7 +334,7 @@ impl ExecutionHub {
             single_wait: FxHashMap::default(),
             single_wait_free_items: FxHashMap::default(),
             stop: Arc::new(AtomicBool::new(false)),
-            remote_item_receiver: RemoteItemReceiver {},
+            distributor,
             worker_task_queue,
         };
         {
@@ -389,7 +391,8 @@ impl ExecutionHub {
                 self.worker_task_queue.send(item).unwrap();
             }
         } else {
-            // TODO: send to remote
+            // not local, send to remote
+            self.distributor.send(item);
         }
     }
 
@@ -475,9 +478,13 @@ impl ExecutionHub {
                 }
             }
 
-            while let Some(item) = self.remote_item_receiver.recv() {
+            // receive from remote
+            while let Some(item) = self.distributor.recv() {
                 self.handle_item(item);
             }
+
+            // send pending buffers
+            self.distributor.poll();
         }
     }
 
@@ -556,15 +563,39 @@ mod test {
         }
     }
 
+    struct FakeDistributor {}
+
+    impl AbstractDistributor for FakeDistributor {
+        fn recv(&mut self) -> Option<Box<TaskItem>> {
+            None
+        }
+        fn send(&mut self, _item: Box<TaskItem>) {}
+        fn poll(&mut self) {}
+    }
+
     struct ExecutorHubSetUp<'a> {
         _test_guard: RuntimeTestGuard<'a>,
         join_handle: Option<thread::JoinHandle<()>>,
         trigger: ExecutionHubTrigger,
     }
     impl<'a> ExecutorHubSetUp<'a> {
-        fn new() -> Self {
+        fn new(distrbutor: Distributor) -> Self {
             let _test_guard = RuntimeTestGuard::new();
-            let mut hub = ExecutionHub::new();
+            let mut hub = ExecutorHub::new(distrbutor);
+            let trigger = hub.get_trigger();
+            let join_handle = Some(thread::spawn(move || hub.run()));
+            ExecutorHubSetUp {
+                _test_guard,
+                trigger,
+                join_handle,
+            }
+        }
+    }
+
+    impl<'a> ExecutorHubSetUp<'a> {
+        fn default() -> Self {
+            let _test_guard = RuntimeTestGuard::new();
+            let mut hub = _ExecutionHub::new(FakeDistributor {});
             let trigger = hub.get_trigger();
             let join_handle = Some(thread::spawn(move || hub.run()));
             ExecutorHubSetUp {
@@ -578,7 +609,10 @@ mod test {
         fn drop(&mut self) {
             // stop all
             self.trigger.stop();
-            self.join_handle.take().unwrap().join().unwrap();
+            // unwinder panic will sigill!
+            if self.join_handle.take().unwrap().join().is_err() {
+                eprintln!("executor thread quit with error")
+            }
         }
     }
 
@@ -640,7 +674,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_send_after_wait() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let here = global_id::here();
@@ -663,7 +697,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_send_many_wait() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let mut wait_these = vec![];
@@ -694,7 +728,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_should_panic() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         std::panic::set_hook(Box::new(|_| {})); // silence backtrace
@@ -739,7 +773,7 @@ mod test {
 
     #[test]
     fn test_many_local() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let mut activities: Vec<(ActivityId, Vec<ActivityId>)> = vec![];
@@ -761,7 +795,7 @@ mod test {
 
     #[test]
     fn test_local_worker_task_queue() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
         let mut q = WORKER_TASK_QUEUE.lock().unwrap();
         let worker_receiver = q.1.take().unwrap();
         let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
@@ -799,7 +833,7 @@ mod test {
 
     #[test]
     fn test_distributor() {
-        let _e = ExecutorHubSetUp::new();
+        let _e = ExecutorHubSetUp::default();
 
         let (bytes_t, bytes_r) = mpsc::channel::<Vec<u8>>();
         let (buf_t, buf_r) = mpsc::channel::<Box<dyn AbstractSquashBuffer>>();
@@ -855,5 +889,96 @@ mod test {
         }
 
         t.join().unwrap();
+    }
+
+    #[test]
+    fn test_execuctionhub_with_distributor() {
+        let (bytes_t, bytes_r) = mpsc::channel::<Vec<u8>>();
+        let (buf_t, buf_r) = mpsc::channel::<Box<dyn AbstractSquashBuffer>>();
+
+        let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let distrbutor = Distributor::new(factory, 10, bytes_t, buf_r);
+
+        let dst_place: Place = 1;
+        let fid_handle_usize = 1;
+        let fid_handle_squash = 2;
+
+        let t = thread::spawn(move || {
+            // fake network layer
+            while let Ok(bytes) = bytes_r.recv() {
+                let mut buffer_got = factory1.deserialize_from(&bytes[..]);
+                let mut buffer_send = factory1.new_buffer();
+                buffer_got.extract_all();
+
+                while let Some(item) = buffer_got.pop() {
+                    let mut e = TaskItemExtracter::new(item);
+                    let aid = e.activity_id();
+                    let src_place = aid.get_spawned_place();
+                    let finish_place = aid.get_finish_id().get_place();
+                    assert_eq!(e.place(), dst_place); // dst should be correct
+
+                    let mut build_for_wait_all = TaskItemBuilder::new(e.fn_id(), finish_place, aid);
+                    let mut build_for_wait_single = TaskItemBuilder::new(e.fn_id(), src_place, aid);
+
+                    build_for_wait_all.ret(thread::Result::<()>::Ok(()));
+                    if e.fn_id() == fid_handle_usize {
+                        let ret = e.arg::<usize>() - 1; // calculation
+                        build_for_wait_single.ret(thread::Result::<usize>::Ok(ret));
+                    } else if e.fn_id() == fid_handle_squash {
+                        let mut ret_a = e.arg_squash::<A>();
+                        ret_a.value -= 1;
+                        build_for_wait_single.ret_squash(thread::Result::<A>::Ok(ret_a));
+                    } else {
+                        panic!()
+                    }
+                    build_for_wait_single.waited();
+                    buffer_send.push(build_for_wait_all.build());
+                    buffer_send.push(build_for_wait_single.build());
+                }
+
+                buffer_send.squash_all();
+                buf_t.send(buffer_send).unwrap();
+            }
+        });
+
+        {
+            let _e = ExecutorHubSetUp::new(distrbutor); // executor should quit first
+            let mut ctx = ConcreteContext::new_frame();
+            let mut wait_these = vec![];
+            let mut wait_squash = vec![];
+            // prepare and send return
+            for return_value in 0..1024usize {
+                // register a sub activity
+                let new_aid = ctx.spwan();
+                wait_these.push((wait_single::<usize>(new_aid), return_value));
+                // prepare request
+                let mut builder = TaskItemBuilder::new(fid_handle_usize, dst_place, new_aid);
+                builder.arg(return_value + 1); // remote should set the value -= 1
+                builder.waited();
+                ConcreteContext::send(builder.build_box());
+            }
+
+            for value in 0..1024 {
+                let new_aid = ctx.spwan();
+                let return_a = A { value };
+                wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
+                // prepare request
+                let mut builder = TaskItemBuilder::new(fid_handle_squash, dst_place, new_aid);
+                builder.arg_squash(A { value: value + 1 });
+                builder.waited();
+                ConcreteContext::send(builder.build_box());
+            }
+
+            for (f, v) in wait_these {
+                assert_eq!(executor::block_on(f), v);
+            }
+            for (f, v) in wait_squash {
+                assert_eq!(executor::block_on(f), v);
+            }
+            // wait all
+            executor::block_on(wait_all(ctx));
+        }
+        assert!(t.join().is_ok())
     }
 }
