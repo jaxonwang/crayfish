@@ -721,7 +721,7 @@ pub mod test {
     use rand::seq::SliceRandom;
     use std::convert::TryInto;
 
-    fn _clone<T: Send + Clone + 'static>(this: &TaskItem) -> TaskItem {
+    pub fn _clone<T: Send + Clone + 'static>(this: &TaskItem) -> TaskItem {
         let cbox = |v: &(PackedValue, OrderLabel)| {
             let (a, b) = v;
             (
@@ -744,12 +744,12 @@ pub mod test {
             squashable: this.squashable.iter().map(cbox).collect(),
         }
     }
-    fn _eq<T: Send + PartialEq + 'static>(this: &TaskItem, i: &TaskItem) -> bool {
-        let mut ret = this.inner == i.inner && this.squashable.len() == i.squashable.len();
-        for index in 0..this.squashable.len() {
-            ret = ret && this.squashable[index].1 == i.squashable[index].1;
+    pub fn _eq<T: Send + PartialEq + 'static>(t: &TaskItem, i: &TaskItem) -> bool {
+        let mut ret = t.inner == i.inner && t.squashable.len() == i.squashable.len();
+        for index in 0..t.squashable.len() {
+            ret = ret && t.squashable[index].1 == i.squashable[index].1;
             ret = ret
-                && this.squashable[index].0.downcast_ref::<T>().unwrap()
+                && t.squashable[index].0.downcast_ref::<T>().unwrap()
                     == i.squashable[index].0.downcast_ref::<T>().unwrap();
             if !ret {
                 return false;
@@ -810,7 +810,7 @@ pub mod test {
     }
 
     #[derive(Serialize, Deserialize)]
-    struct ConcreteDispatch {}
+    pub struct ConcreteDispatch {}
     impl ProperDispatcher for ConcreteDispatch {}
     impl<Op> SquashDispatch<Op> for ConcreteDispatch
     where
@@ -889,11 +889,11 @@ pub mod test {
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-    struct B {
-        value: u8,
+    pub struct B {
+        pub value: u8,
     }
     #[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
-    struct BOut {
+    pub struct BOut {
         list: Vec<u8>,
     }
     impl Squashable for B {

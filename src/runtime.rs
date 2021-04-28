@@ -230,6 +230,7 @@ impl Distributor {
         loop {
             let front = match self.in_buffers.front_mut() {
                 None => match self.receiver.try_recv() {
+                    // in buffers are emtpy, try to receive new squash buffers
                     Ok(buffer) => {
                         let mut buffer = buffer;
                         buffer.extract_all();
@@ -255,6 +256,7 @@ impl Distributor {
         }
     }
 
+    #[allow(clippy::boxed_local)] // allow since TaskItem is going to be sent
     fn send(&mut self, item: Box<TaskItem>) {
         // should never send to local, in my implementation
         debug_assert!(item.place() != global_id::here());
@@ -779,5 +781,79 @@ mod test {
             worker_receiver.try_recv().unwrap_err(),
             mpsc::TryRecvError::Empty
         ));
+    }
+
+    use crate::activity::test::ConcreteDispatch;
+    use crate::activity::test::_clone;
+    use crate::activity::test::_eq;
+    use crate::activity::FunctionLabel;
+    use crate::activity::SquashBufferFactory;
+
+    fn distributor_block_recv(d: &mut Distributor) -> Box<TaskItem> {
+        loop {
+            if let Some(t) = d.recv() {
+                break t;
+            }
+        }
+    }
+
+    #[test]
+    fn test_distributor() {
+        let _e = ExecutorHubSetUp::new();
+
+        let (bytes_t, bytes_r) = mpsc::channel::<Vec<u8>>();
+        let (buf_t, buf_r) = mpsc::channel::<Box<dyn AbstractSquashBuffer>>();
+
+        let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let distrbutor = Distributor::new(factory, 10, bytes_t, buf_r);
+
+        let t = thread::spawn(move || {
+            // fake network layer
+            while let Ok(bytes) = bytes_r.recv() {
+                let buffer = factory1.deserialize_from(&bytes[..]);
+                buf_t.send(buffer).unwrap();
+            }
+        });
+
+        // prepare task a
+        let mut a_task = vec![];
+        for i in 0..100usize {
+            let mut b = TaskItemBuilder::new(i as FunctionLabel, 9, i as ActivityId);
+            b.arg(i);
+            b.arg_squash(A { value: i });
+            a_task.push(b.build_box());
+        }
+
+        {
+            let mut distrbutor = distrbutor; // move, to drop the channel
+                                             // send 1 receive 1
+            for task in a_task.iter() {
+                distrbutor.send(Box::new(_clone::<A>(task)));
+                thread::sleep(time::Duration::from_millis(1));
+                distrbutor.poll();
+                assert!(_eq::<A>(&*distributor_block_recv(&mut distrbutor), task));
+            }
+
+            // send all receive all
+            for task in a_task.iter() {
+                distrbutor.send(Box::new(_clone::<A>(task)));
+            }
+            thread::sleep(MAX_BUFFER_LIFETIME);
+            distrbutor.poll(); // flush all
+
+            let mut received = vec![]; // since squash, order changes
+            for _ in 0..a_task.len() {
+                let got = *distributor_block_recv(&mut distrbutor);
+                received.push(got);
+            }
+            assert!(distrbutor.recv().is_none());
+            received.sort_by_key(|item| item.activity_id());
+            for i in 0..a_task.len() {
+                assert!(_eq::<A>(&received[i], &*a_task[i]));
+            }
+        }
+
+        t.join().unwrap();
     }
 }
