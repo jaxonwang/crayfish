@@ -866,12 +866,13 @@ pub mod test {
     #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
     pub struct AOut {
         last: usize,
-        diffs: Vec<u8>,
+        diffs: Vec<usize>,
     }
 
     impl Squashable for A {
         type Squashed = AOut;
         fn fold(&self, acc: &mut Self::Squashed) {
+            println!("fold {} {}", self.value, acc.last);
             assert!(acc.last <= self.value);
             acc.diffs.push((self.value - acc.last).try_into().unwrap());
             acc.last = self.value;
@@ -1152,7 +1153,7 @@ pub mod test {
         // aout squash
         let aout = AOut {
             last: 12345,
-            diffs: (0..199u8).collect(),
+            diffs: (0..199).collect(),
         };
         let packed_a = Box::new(aout.clone()) as PackedValue;
         let ord_a = (0..100).collect::<Vec<OrderLabel>>();
