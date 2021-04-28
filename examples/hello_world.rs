@@ -1,6 +1,7 @@
 use rust_apgas::logging;
 use rust_apgas::logging::*;
 use rust_apgas::network;
+use rust_apgas::network::MessageSender;
 
 extern crate rust_apgas;
 
@@ -24,7 +25,7 @@ pub fn main() {
         info!("{} {} bytes from:{} ", a, buf.len(), src.as_i32());
     };
     logging::setup_logger().unwrap();
-    let mut context = network::CommunicationContext::new(&mut callback);
+    let mut context = network::context::CommunicationContext::new(&mut callback);
     let sender = context.single_sender();
     let context = context;
 
@@ -37,13 +38,13 @@ pub fn main() {
         scope.spawn(|_| {
             let sender = sender;
             for p in 0..world {
-                sender.send(network::Rank::new(p as i32), payload.clone());
+                sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
             for p in 0..world {
-                sender.send(network::Rank::new(p as i32), payload.clone());
+                sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
             for p in 0..world {
-                sender.send(network::Rank::new(p as i32), payload.clone());
+                sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
             log::logger().flush();
         });

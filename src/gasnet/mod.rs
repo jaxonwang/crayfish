@@ -1,10 +1,13 @@
 use crate::logging;
 use crate::logging::*;
+use crate::network::CollectiveOperator;
+use crate::network::MessageHandler;
+use crate::network::MessageSender;
+use crate::network::Rank;
 use bit_vec::BitVec;
-use rustc_hash::FxHashMap;
 use gex_sys::*;
+use rustc_hash::FxHashMap;
 use std::convert::TryInto;
-use std::fmt;
 use std::os::raw::*;
 use std::ptr::null_mut;
 use std::slice;
@@ -12,9 +15,23 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
-extern crate rustc_hash;
 extern crate gex_sys;
 extern crate libc;
+extern crate rustc_hash;
+
+trait GexRank {
+    fn gex_rank(&self) -> gex_Rank_t;
+    fn from_gex_rank(rank: gex_Rank_t) -> Self;
+}
+
+impl GexRank for Rank {
+    fn gex_rank(&self) -> gex_Rank_t {
+        self.as_i32().try_into().unwrap()
+    }
+    fn from_gex_rank(rank: gex_Rank_t) -> Self {
+        Self::new(rank.try_into().unwrap())
+    }
+}
 
 type MessageId = usize;
 
@@ -113,34 +130,6 @@ impl FragmentBuffer {
 struct EndpointData {
     segment_addr: *mut c_void,
     segment_len: usize,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Rank {
-    rank: i32,
-}
-
-impl Rank {
-    pub fn new(rank: i32) -> Self {
-        Rank { rank }
-    }
-    pub fn as_i32(&self) -> i32 {
-        self.rank
-    }
-    pub fn as_usize(&self) -> usize {
-        self.rank.try_into().unwrap()
-    }
-    fn gex_rank(&self) -> gex_Rank_t {
-        self.rank.try_into().unwrap()
-    }
-    fn from_gex_rank(rank: gex_Rank_t) -> Self {
-        Self::new(rank.try_into().unwrap())
-    }
-}
-impl fmt::Display for Rank {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.rank)
-    }
 }
 
 union B64 {
@@ -298,8 +287,6 @@ fn prepare_entry_table() -> Entrytable {
     }
     tb
 }
-
-type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Rank, &'b [u8]);
 
 impl<'a> CommunicationContext<'a> {
     pub fn new(handler: &'a mut MessageHandler<'a>) -> Self {
@@ -528,8 +515,8 @@ impl<'a> CommunicationContext<'a> {
         }
     }
 
-    pub fn collective_operator(&self) -> CollectiveOperator {
-        CollectiveOperator { team: self.team }
+    pub fn collective_operator(&self) -> GexCollectiveOperator {
+        GexCollectiveOperator { team: self.team }
     }
 
     pub fn cmd_args(&self) -> &[String] {
@@ -549,20 +536,20 @@ pub struct SingleSender {
     message_chan: mpsc::Sender<(Rank, Vec<u8>)>,
 }
 
-impl SingleSender {
-    pub fn send(&self, dst: Rank, message: Vec<u8>) {
+impl MessageSender for SingleSender {
+    fn send_msg(&self, dst: Rank, message: Vec<u8>) {
         self.message_chan.send((dst, message)).unwrap();
     }
 }
 
-pub struct CollectiveOperator {
+pub struct GexCollectiveOperator {
     team: gex_TM_t,
 }
 
 // team is pointer, not send but we know it's ok to share team
-unsafe impl Send for CollectiveOperator {}
-impl CollectiveOperator {
-    pub fn barrier(&self) {
+unsafe impl Send for GexCollectiveOperator {}
+impl CollectiveOperator for GexCollectiveOperator {
+    fn barrier(&self) {
         // only support global barrier now
         // TODO I dont know will this interruppt other or not
         let event = gex_coll_barrier_nb(self.team);

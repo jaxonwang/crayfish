@@ -13,6 +13,8 @@ use crate::global_id::ActivityIdLower;
 use crate::global_id::ActivityIdMethods;
 use crate::logging::*;
 use crate::meta_data;
+use crate::network::MessageSender;
+use crate::network::Rank;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::any::Any;
@@ -185,7 +187,7 @@ pub async fn wait_all(ctx: ConcreteContext) {
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-pub trait AbstractDistributor {
+pub trait AbstractDistributor: Send + 'static {
     fn recv(&mut self) -> Option<Box<TaskItem>>;
     fn send(&mut self, item: Box<TaskItem>);
     fn poll(&mut self);
@@ -194,19 +196,22 @@ pub trait AbstractDistributor {
 // I guess 1 ms is the RTT for ethernet
 const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
 // who will perfrom squash and inflate
-struct Distributor {
+struct Distributor<S: MessageSender> {
     buffer_factory: Box<dyn AbstractSquashBufferFactory>,
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
-    sender: Sender<Vec<u8>>,
+    sender: S,
     receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
     in_buffers: VecDeque<Box<dyn AbstractSquashBuffer>>,
 }
 
-impl Distributor {
+impl<S> Distributor<S>
+where
+    S: MessageSender,
+{
     fn new(
         buffer_factory: Box<dyn AbstractSquashBufferFactory>,
         world_size: usize,
-        sender: Sender<Vec<u8>>,
+        sender: S,
         receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
     ) -> Self {
         let out_buffers: Vec<_> = (0..world_size)
@@ -229,11 +234,14 @@ impl Distributor {
         }
         dst_buffer.0.squash_all();
         let bytes = dst_buffer.0.serialize_and_clear();
-        self.sender.send(bytes).unwrap();
+        self.sender.send_msg(Rank::from_usize(idx), bytes);
     }
 }
 
-impl AbstractDistributor for Distributor {
+impl<S> AbstractDistributor for Distributor<S>
+where
+    S: MessageSender,
+{
     // will extract
     fn recv(&mut self) -> Option<Box<TaskItem>> {
         loop {
@@ -288,7 +296,7 @@ impl AbstractDistributor for Distributor {
 }
 
 #[derive(Debug)]
-pub struct _ExecutionHub<D>
+pub struct ExecutionHub<D>
 where
     D: AbstractDistributor,
 {
@@ -305,8 +313,6 @@ where
     worker_task_queue: Sender<Box<TaskItem>>,
 }
 
-type ExecutorHub = _ExecutionHub<Distributor>;
-
 pub struct ExecutionHubTrigger {
     stop: Arc<AtomicBool>,
 }
@@ -316,7 +322,7 @@ impl ExecutionHubTrigger {
     }
 }
 
-impl<D> _ExecutionHub<D>
+impl<D> ExecutionHub<D>
 where
     D: AbstractDistributor,
 {
@@ -325,7 +331,7 @@ where
             let mut q = WORKER_TASK_QUEUE.lock().unwrap();
             q.0.take().unwrap()
         };
-        let mut hub = _ExecutionHub {
+        let mut hub = ExecutionHub {
             task_item_receivers: vec![],
             wait_request_receivers: vec![],
             return_item_sender: FxHashMap::default(),
@@ -579,9 +585,9 @@ mod test {
         trigger: ExecutionHubTrigger,
     }
     impl<'a> ExecutorHubSetUp<'a> {
-        fn new(distrbutor: Distributor) -> Self {
+        fn new(distrbutor: impl AbstractDistributor) -> Self {
             let _test_guard = RuntimeTestGuard::new();
-            let mut hub = ExecutorHub::new(distrbutor);
+            let mut hub = ExecutionHub::new(distrbutor);
             let trigger = hub.get_trigger();
             let join_handle = Some(thread::spawn(move || hub.run()));
             ExecutorHubSetUp {
@@ -595,7 +601,7 @@ mod test {
     impl<'a> ExecutorHubSetUp<'a> {
         fn default() -> Self {
             let _test_guard = RuntimeTestGuard::new();
-            let mut hub = _ExecutionHub::new(FakeDistributor {});
+            let mut hub = ExecutionHub::new(FakeDistributor {});
             let trigger = hub.get_trigger();
             let join_handle = Some(thread::spawn(move || hub.run()));
             ExecutorHubSetUp {
@@ -823,11 +829,20 @@ mod test {
     use crate::activity::FunctionLabel;
     use crate::activity::SquashBufferFactory;
 
-    fn distributor_block_recv(d: &mut Distributor) -> Box<TaskItem> {
+    fn distributor_block_recv(d: &mut impl AbstractDistributor) -> Box<TaskItem> {
         loop {
             if let Some(t) = d.recv() {
                 break t;
             }
+        }
+    }
+    struct MockSender {
+        sender: Sender<Vec<u8>>,
+    }
+
+    impl MessageSender for MockSender {
+        fn send_msg(&self, _dst: Rank, message: Vec<u8>) {
+            self.sender.send(message).unwrap()
         }
     }
 
@@ -840,7 +855,7 @@ mod test {
 
         let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
         let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
-        let distrbutor = Distributor::new(factory, 10, bytes_t, buf_r);
+        let distrbutor = Distributor::new(factory, 10, MockSender { sender: bytes_t }, buf_r);
 
         let t = thread::spawn(move || {
             // fake network layer
@@ -898,7 +913,7 @@ mod test {
 
         let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
         let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
-        let distrbutor = Distributor::new(factory, 10, bytes_t, buf_r);
+        let distrbutor = Distributor::new(factory, 10, MockSender { sender: bytes_t }, buf_r);
 
         let dst_place: Place = 1;
         let fid_handle_usize = 1;
