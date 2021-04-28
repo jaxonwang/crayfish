@@ -3,6 +3,7 @@ use crate::activity::AbstractSquashBufferFactory;
 use crate::activity::ActivityId;
 use crate::activity::RemoteSend;
 use crate::activity::Squashable;
+use crate::activity::StaticSquashBufferFactory;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemBuilder;
 use crate::activity::TaskItemExtracter;
@@ -60,10 +61,43 @@ type TaskWaitChannels = Vec<(
     Option<Sender<Box<WaitRequest>>>,
     Option<Receiver<Box<WaitRequest>>>, // a channel to send channel
 )>;
-
-// must access thess mutex in order
+type MaybeBufferChannel = ( // send squash buffer from network layer to distrbutor
+    Option<Sender<Box<dyn AbstractSquashBuffer>>>,
+    Option<Receiver<Box<dyn AbstractSquashBuffer>>>,
+);
+// must access these mutexes in order
 static WORKER_TASK_QUEUE: Lazy<Mutex<MaybeTaskChannel>> = Lazy::new(|| Mutex::new((None, None)));
 static TASK_ITEM_CHANNELS: Lazy<Mutex<TaskWaitChannels>> = Lazy::new(|| Mutex::new(vec![]));
+static NETWORK_BUFFER_CHANNEL: Lazy<Mutex<MaybeBufferChannel>> = Lazy::new(|| {
+    let (tx, rx) = mpsc::channel();
+    Mutex::new((Some(tx), Some(rx)))
+});
+
+pub fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u8]) {
+    thread_local! { // this is hold in network thread
+        static BUFFER_SENDER: Cell<Option<Sender<Box<dyn AbstractSquashBuffer>>>> = Cell::new(None);
+    };
+
+    let get_ref = || {
+        BUFFER_SENDER.with(|s| loop {
+            let maybe_ref: &Option<_> = unsafe { &*s.as_ptr() };
+            if let Some(s_ref) = maybe_ref.as_ref() {
+                break s_ref;
+            } else {
+                let mut channel = NETWORK_BUFFER_CHANNEL.lock().unwrap();
+                let sender = channel.0.take().unwrap();
+                s.set(Some(sender));
+            }
+        })
+    };
+
+    get_ref().send(F::deserialize_from(data)).unwrap();
+}
+
+// take the receiver from static, to init distributor
+pub fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>>{
+    NETWORK_BUFFER_CHANNEL.lock().unwrap().1.take().unwrap()
+}
 
 #[derive(Debug)]
 enum WaitItem {

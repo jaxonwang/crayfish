@@ -207,6 +207,10 @@ pub trait AbstractSquashBufferFactory: Send {
     fn deserialize_from(&self, bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
 }
 
+pub trait StaticSquashBufferFactory{ // only used in network message callback 
+    fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SquashBuffer<D>
 where
@@ -365,6 +369,14 @@ where
     }
     fn new_buffer(&self) -> Box<dyn AbstractSquashBuffer> {
         Box::new(SquashBuffer::<D>::new())
+    }
+}
+impl<D> StaticSquashBufferFactory for SquashBufferFactory<D>
+where
+    D: ProperDispatcher + DeserializeOwned + Serialize,
+{
+    fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>{
+        Box::new(deserialize_from::<&[u8], SquashBuffer<D>>(bytes).unwrap())
     }
 }
 
