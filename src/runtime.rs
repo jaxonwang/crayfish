@@ -153,8 +153,8 @@ fn get_wait_request_sender_ref() -> &'static Sender<Box<WaitRequest>> {
 pub trait ApgasContext {
     fn inherit(finish_id: FinishId) -> Self;
     fn new_frame() -> Self;
-    fn spwaned(self) -> Vec<ActivityId>;
-    fn spwan(&mut self) -> ActivityId;
+    fn spawned(self) -> Vec<ActivityId>;
+    fn spawn(&mut self) -> ActivityId;
     fn send(item: Box<TaskItem>);
 }
 
@@ -177,11 +177,11 @@ impl ApgasContext for ConcreteContext {
             finish_id: global_id::new_global_finish_id(),
         }
     }
-    fn spwaned(self) -> Vec<ActivityId> {
+    fn spawned(self) -> Vec<ActivityId> {
         self.sub_activities
     }
 
-    fn spwan(&mut self) -> ActivityId {
+    fn spawn(&mut self) -> ActivityId {
         let aid = global_id::new_global_activity_id(self.finish_id);
         self.sub_activities.push(aid);
         aid
@@ -236,7 +236,7 @@ pub trait AbstractDistributor: Send + 'static {
 // I guess 1 ms is the RTT for ethernet
 const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
 // who will perfrom squash and inflate
-struct Distributor<S: MessageSender> {
+pub struct Distributor<S: MessageSender> {
     buffer_factory: Box<dyn AbstractSquashBufferFactory>,
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
     sender: S,
@@ -248,7 +248,7 @@ impl<S> Distributor<S>
 where
     S: MessageSender,
 {
-    fn new(
+    pub fn new(
         buffer_factory: Box<dyn AbstractSquashBufferFactory>,
         world_size: usize,
         sender: S,
@@ -727,7 +727,7 @@ mod test {
         let here = global_id::here();
         assert_eq!(here, ctx.finish_id.get_place());
         // register a sub activity
-        let new_aid = ctx.spwan();
+        let new_aid = ctx.spawn();
         let f = wait_single::<usize>(new_aid);
         let return_value = 123456;
         let can_ret =
@@ -752,13 +752,13 @@ mod test {
         // prepare and send return
         for return_value in 0..1024 {
             // register a sub activity
-            let new_aid = ctx.spwan();
+            let new_aid = ctx.spawn();
             wait_these.push((wait_single::<usize>(new_aid), return_value));
             send_2_local(new_aid, return_value, vec![]);
         }
 
         for value in 0..1024 {
-            let new_aid = ctx.spwan();
+            let new_aid = ctx.spawn();
             let return_a = A { value };
             wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
             send_2_squash_local(new_aid, return_a, vec![]);
@@ -779,7 +779,7 @@ mod test {
         // new context
         let mut ctx = ConcreteContext::new_frame();
         std::panic::set_hook(Box::new(|_| {})); // silence backtrace
-        let new_aid = ctx.spwan();
+        let new_aid = ctx.spawn();
         let f = wait_single::<usize>(new_aid);
         send_2_local_panic(new_aid, vec![]);
 
@@ -801,7 +801,7 @@ mod test {
         activities: &mut Vec<(ActivityId, Vec<ActivityId>)>,
     ) {
         for _ in 0..degree {
-            let new_aid = ctx.spwan();
+            let new_aid = ctx.spawn();
             if current_depth != depth_max {
                 let mut new_ctx = ConcreteContext::inherit(new_aid.get_finish_id());
                 activity_tree(
@@ -811,7 +811,7 @@ mod test {
                     degree,
                     activities,
                 );
-                activities.push((new_aid, new_ctx.spwaned()));
+                activities.push((new_aid, new_ctx.spawned()));
             } else {
                 activities.push((new_aid, vec![]));
             }
@@ -1001,7 +1001,7 @@ mod test {
             // prepare and send return
             for return_value in 0..1024usize {
                 // register a sub activity
-                let new_aid = ctx.spwan();
+                let new_aid = ctx.spawn();
                 wait_these.push((wait_single::<usize>(new_aid), return_value));
                 // prepare request
                 let mut builder = TaskItemBuilder::new(fid_handle_usize, dst_place, new_aid);
@@ -1011,7 +1011,7 @@ mod test {
             }
 
             for value in 0..1024 {
-                let new_aid = ctx.spwan();
+                let new_aid = ctx.spawn();
                 let return_a = A { value };
                 wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
                 // prepare request

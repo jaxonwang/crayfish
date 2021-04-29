@@ -62,6 +62,8 @@ pub struct CommunicationContext<'a> {
     ack_fragment_id: Vec<AtomicUsize>,
 }
 
+unsafe impl<'a> Send for CommunicationContext<'a> {}
+
 struct FragmentBuffer {
     buffer: Vec<u8>,
     fragment_size: usize,
@@ -407,7 +409,7 @@ impl<'a> CommunicationContext<'a> {
         loop {
             match self.message_chan.try_recv() {
                 Ok((dst, msg)) => self.send(dst, &msg[..]),
-                Err(Empty) => continue, // TODO: backoff?
+                Err(Empty) => continue,     // TODO: backoff?
                 Err(Disconnected) => break, // the upper layer stop fist
             }
         }

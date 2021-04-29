@@ -46,12 +46,15 @@ impl ActivityIdMethods for ActivityId {
     }
 }
 
+// TODO move these world info to another mod
 static HERE_STATIC: OnceCell<Place> = OnceCell::new();
+static WORLD_SIZE_STATIC: OnceCell<usize> = OnceCell::new();
 // two level mutex here, but I think the code is clear
 static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(|| Mutex::new(0));
 
 thread_local! {
-    pub static HERE_LOCAL: Cell<Option<Place>> = Cell::new(None);
+    static HERE_LOCAL: Cell<Option<Place>> = Cell::new(None);
+    static WORLD_SIZE: Cell<Option<usize>> = Cell::new(None);
     static WORKER_ID: Cell<Option<WorkerId>> = Cell::new(None);
     static NEXT_FINISH_LOCAL_ID: Cell<FinishLocalId> = Cell::new(0); // start from 1
     static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
@@ -61,6 +64,10 @@ pub fn init_here(here: Rank) {
     HERE_STATIC.set(here.as_i32().try_into().unwrap()).unwrap();
 }
 
+pub fn init_world_size(size: usize){
+    WORLD_SIZE_STATIC.set(size).unwrap();
+}
+
 pub fn here() -> Place {
     HERE_LOCAL.with(|h| match h.get() {
         Some(p) => p,
@@ -68,6 +75,17 @@ pub fn here() -> Place {
             let p = HERE_STATIC.get().expect("here place id is not initialized");
             h.set(Some(*p));
             here()
+        }
+    })
+}
+
+pub fn world_size() -> usize{
+    WORLD_SIZE.with(|h| match h.get() {
+        Some(p) => p,
+        None => {
+            let p = WORLD_SIZE_STATIC.get().expect("world size is not initialized");
+            h.set(Some(*p));
+            world_size()
         }
     })
 }

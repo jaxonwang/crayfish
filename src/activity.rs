@@ -77,7 +77,7 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 // TODO: arrange squash
 
 type SquashableMap = FxHashMap<TypeId, Vec<(PackedValue, OrderLabel)>>;
-type SquashedMapValue = (PackedValue, Vec<OrderLabel>);
+pub type SquashedMapValue = (PackedValue, Vec<OrderLabel>);
 type SquashedMap = FxHashMap<TypeId, SquashedMapValue>;
 type OrderedSquashable = Vec<(PackedValue, OrderLabel)>;
 

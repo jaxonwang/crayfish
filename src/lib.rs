@@ -1,7 +1,7 @@
-mod activity;
+pub mod activity; // TODO private
 mod finish;
 mod gasnet;
-mod global_id;
+pub mod global_id; // TODO: private
 pub mod logging; // TODO: mark as private
 mod meta_data;
 pub mod network; // TODO: mark private
