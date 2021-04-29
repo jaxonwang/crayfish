@@ -1,7 +1,8 @@
 use std::convert::TryInto;
 use std::fmt;
 
-pub type MessageHandler<'a> = dyn 'a + for<'b> FnMut(Rank, &'b [u8]);
+pub trait MessageHandler: for<'a> FnMut(Rank, &'a [u8]) {}
+impl<T> MessageHandler for T where T: for<'a> FnMut(Rank, &'a [u8]) {}
 
 pub trait MessageSender: Send + 'static {
     fn send_msg(&self, dst: Rank, message: Vec<u8>);

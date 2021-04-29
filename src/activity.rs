@@ -40,6 +40,19 @@ pub fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayloa
     }
 }
 
+pub fn copy_panic_payload(
+    payload: &Box<dyn Any + Send + 'static>,
+) -> Box<dyn Any + Send + 'static> {
+    let id = (**payload).type_id();
+    if id == TypeId::of::<String>() {
+        Box::new(payload.downcast_ref::<String>().unwrap().clone())
+    } else if id == TypeId::of::<&str>() {
+        Box::new(String::from(*payload.downcast_ref::<&str>().unwrap()))
+    } else {
+        Box::new(String::from("Unsupport payload type"))
+    }
+}
+
 // Squashable is for large size type. Small size type should be wrapped in a largger one
 //
 // Reason 1: I attach each squashable a order label to indicate the original order for the
@@ -207,7 +220,8 @@ pub trait AbstractSquashBufferFactory: Send {
     fn deserialize_from(&self, bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
 }
 
-pub trait StaticSquashBufferFactory{ // only used in network message callback 
+pub trait StaticSquashBufferFactory {
+    // only used in network message callback
     fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
 }
 
@@ -375,7 +389,7 @@ impl<D> StaticSquashBufferFactory for SquashBufferFactory<D>
 where
     D: ProperDispatcher + DeserializeOwned + Serialize,
 {
-    fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>{
+    fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer> {
         Box::new(deserialize_from::<&[u8], SquashBuffer<D>>(bytes).unwrap())
     }
 }

@@ -237,7 +237,6 @@ pub trait AbstractDistributor: Send + 'static {
 const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
 // who will perfrom squash and inflate
 pub struct Distributor<S: MessageSender> {
-    buffer_factory: Box<dyn AbstractSquashBufferFactory>,
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
     sender: S,
     receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
@@ -258,7 +257,6 @@ where
             .map(|_| (buffer_factory.new_buffer(), time::Instant::now()))
             .collect();
         Distributor {
-            buffer_factory,
             out_buffers,
             sender,
             receiver,

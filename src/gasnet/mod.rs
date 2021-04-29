@@ -35,13 +35,13 @@ impl GexRank for Rank {
 
 type MessageId = usize;
 
-pub struct CommunicationContext<'a> {
+pub struct CommunicationContext<T> {
     // endpoint: gex_EP_t, // thread safe handler
     team: gex_TM_t,
     // entry_table: Entrytable,
     cmd_args: Vec<String>,
 
-    message_handler: &'a mut MessageHandler<'a>,
+    message_handler: T,
 
     segment_len: usize,
     endpoints_data: Vec<EndpointData>,
@@ -62,7 +62,7 @@ pub struct CommunicationContext<'a> {
     ack_fragment_id: Vec<AtomicUsize>,
 }
 
-unsafe impl<'a> Send for CommunicationContext<'a> {}
+unsafe impl<T> Send for CommunicationContext<T> where T: MessageHandler {}
 
 struct FragmentBuffer {
     buffer: Vec<u8>,
@@ -148,10 +148,14 @@ fn i32_2_to_u64(a: i32, b: i32) -> u64 {
 }
 
 // TODO: make this thread local and in refcell
-const COM_CONTEXT_NULL: *mut CommunicationContext = null_mut::<CommunicationContext>();
-static mut GLOBAL_CONTEXT_PTR: *mut CommunicationContext = COM_CONTEXT_NULL;
+const COM_CONTEXT_NULL: *mut () = null_mut::<()>();
+static mut GLOBAL_CONTEXT_PTR: *mut () = COM_CONTEXT_NULL;
 
-extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t) {
+extern "C" fn recv_medium<T: MessageHandler>(
+    token: gex_Token_t,
+    buf: *const c_void,
+    nbytes: size_t,
+) {
     let t_info = gex_token_info(token);
     let src = Rank::from_gex_rank(t_info.gex_srcrank);
     // trace!("medium recv {} bytes from {} at mem {:?}", nbytes, src, buf);
@@ -162,7 +166,7 @@ extern "C" fn recv_medium(token: gex_Token_t, buf: *const c_void, nbytes: size_t
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
             "Context pointer is null"
         );
-        ((*GLOBAL_CONTEXT_PTR).message_handler)(src, buf);
+        ((*(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>)).message_handler)(src, buf);
     }
 }
 
@@ -172,7 +176,7 @@ trait RankFromToken {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn _recv_long<T: RankFromToken>(
+fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     _nbytes: size_t,
@@ -183,13 +187,13 @@ fn _recv_long<T: RankFromToken>(
     arg4: gasnet_handlerarg_t,
     arg5: gasnet_handlerarg_t,
 ) {
-    let src = T::from_token(token);
+    let src = TK::from_token(token);
     let src_idx = src.as_usize();
 
     let message_len = i32_2_to_u64(arg0, arg1) as usize;
     let offset = i32_2_to_u64(arg2, arg3) as usize;
     let message_id = i32_2_to_u64(arg4, arg5) as usize;
-    let context: &mut CommunicationContext = unsafe { &mut *GLOBAL_CONTEXT_PTR };
+    let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
     let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
     // debug!("long recv {} bytes from {} at mem {:?} {}", _nbytes, src, buf, chunk_size);
@@ -199,7 +203,7 @@ fn _recv_long<T: RankFromToken>(
             GLOBAL_CONTEXT_PTR != COM_CONTEXT_NULL,
             "Context pointer is null"
         );
-        ((*GLOBAL_CONTEXT_PTR).message_handler)(src, buf);
+        ((*(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>)).message_handler)(src, buf);
     };
 
     if message_len <= chunk_size {
@@ -207,7 +211,7 @@ fn _recv_long<T: RankFromToken>(
         // whole message received
         debug_assert!(offset == 0);
         call_handler(buf);
-        T::reply_short(token);
+        TK::reply_short(token);
         return;
     }
 
@@ -225,10 +229,10 @@ fn _recv_long<T: RankFromToken>(
         call_handler(buf);
         context.message_buffers[src_idx].remove(&message_id);
     }
-    T::reply_short(token);
+    TK::reply_short(token);
 }
 
-extern "C" fn recv_long(
+extern "C" fn recv_long<T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
@@ -249,15 +253,15 @@ extern "C" fn recv_long(
             gex_am_reply_short0(token, ACK_REPLY_INDEX);
         }
     }
-    _recv_long::<Getter>(token, buf, nbytes, a0, a1, a2, a3, a4, a5);
+    _recv_long::<Getter, T>(token, buf, nbytes, a0, a1, a2, a3, a4, a5);
 }
 
 /// when received reply from remote indicating the whole message is received
-extern "C" fn ack_reply(token: gex_Token_t) {
+extern "C" fn ack_reply<T: MessageHandler>(token: gex_Token_t) {
     let t_info = gex_token_info(token);
     let src = t_info.gex_srcrank as usize;
 
-    let context: &CommunicationContext = unsafe { &*GLOBAL_CONTEXT_PTR };
+    let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
 
     let _a = context.ack_fragment_id[src].fetch_add(1, Ordering::Release);
 }
@@ -265,24 +269,24 @@ extern "C" fn ack_reply(token: gex_Token_t) {
 const MEDIUM_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8;
 const LONG_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8 + 1;
 const ACK_REPLY_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8 + 2;
-fn prepare_entry_table() -> Entrytable {
+fn prepare_entry_table<T: MessageHandler>() -> Entrytable {
     let mut tb = Entrytable::new();
     unsafe {
         tb.add_medium_req(
             MEDIUM_HANDLER_INDEX,
-            recv_medium as *const (),
+            recv_medium::<T> as *const (),
             0,
             Some("recv_medium"),
         );
         tb.add_long_req(
             LONG_HANDLER_INDEX,
-            recv_long as *const (),
+            recv_long::<T> as *const (),
             6,
             Some("recv_long"),
         );
         tb.add_short_reply(
             ACK_REPLY_INDEX,
-            ack_reply as *const (),
+            ack_reply::<T> as *const (),
             0,
             Some("ack_reply"),
         );
@@ -290,8 +294,11 @@ fn prepare_entry_table() -> Entrytable {
     tb
 }
 
-impl<'a> CommunicationContext<'a> {
-    pub fn new(handler: &'a mut MessageHandler<'a>) -> Self {
+impl<T> CommunicationContext<T>
+where
+    T: MessageHandler,
+{
+    pub fn new(handler: T) -> Self {
         assert!(
             unsafe { GLOBAL_CONTEXT_PTR == COM_CONTEXT_NULL },
             "Should only one instance!"
@@ -299,7 +306,7 @@ impl<'a> CommunicationContext<'a> {
 
         let (args, _, ep, tm) = gex_client_init();
 
-        let mut tb = prepare_entry_table();
+        let mut tb = prepare_entry_table::<T>();
 
         // register the table
         gex_register_entries(ep, &mut tb);
@@ -392,10 +399,7 @@ impl<'a> CommunicationContext<'a> {
         // set proper ptr
         unsafe {
             // WARN: danger!
-            GLOBAL_CONTEXT_PTR = std::mem::transmute::<
-                &mut CommunicationContext<'a>,
-                *mut CommunicationContext,
-            >(self);
+            GLOBAL_CONTEXT_PTR = self as *mut CommunicationContext<T> as *mut ();
         }
 
         // in case some finish init fast and send message before the pointer is set
@@ -566,14 +570,15 @@ mod test {
     use once_cell::sync::Lazy;
     use rand::prelude::*;
     use std::ptr::null;
-    use std::sync::atomic;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
 
     const MAX_CHUNK_SIZE: usize = 100;
 
-    fn fake_context<'a>(f: &'a mut MessageHandler) -> CommunicationContext<'a> {
+    fn fake_context<T: MessageHandler>(f: T) -> CommunicationContext<T> {
         let (tx, rx) = mpsc::channel();
         CommunicationContext {
             team: null::<*const ()>() as gex_TM_t,
@@ -596,10 +601,9 @@ mod test {
             ack_fragment_id: vec![AtomicUsize::new(0)],
         }
     }
-    fn set_ptr(ctx: &mut CommunicationContext) {
+    fn set_ptr<T>(ctx: &mut CommunicationContext<T>) {
         unsafe {
-            GLOBAL_CONTEXT_PTR =
-                std::mem::transmute::<&mut CommunicationContext, *mut CommunicationContext>(ctx)
+            GLOBAL_CONTEXT_PTR = ctx as *mut CommunicationContext<T> as *mut ();
         }
     }
 
@@ -633,12 +637,15 @@ mod test {
 
     static CONTEXT_TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
-    struct ContextSetUp<'a> {
+    struct ContextSetUp<'a, T> {
         _guard: MutexGuard<'a, bool>,
-        ctx: CommunicationContext<'a>,
+        ctx: CommunicationContext<T>,
     }
-    impl<'a> ContextSetUp<'a> {
-        fn new(callback: &'a mut MessageHandler) -> Self {
+    impl<'a, T> ContextSetUp<'a, T>
+    where
+        T: MessageHandler,
+    {
+        fn new(callback: T) -> Self {
             let _guard = CONTEXT_TEST_LOCK.lock().unwrap();
             let ret = ContextSetUp {
                 _guard,
@@ -648,13 +655,8 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_single_long_receiver() {
-        let called = atomic::AtomicBool::new(false);
-        let mut callback = |_a: Rank, _b: &[u8]| {
-            called.store(true, Ordering::Relaxed);
-        };
-        let mut c = ContextSetUp::new(&mut callback);
+    fn _test_single_long_receiver<T: MessageHandler>(callback: T, called: Arc<AtomicBool>) {
+        let mut c = ContextSetUp::new(callback);
         set_ptr(&mut c.ctx);
 
         let message_payload: Vec<u8> = vec![1; 1234];
@@ -665,13 +667,13 @@ mod test {
             called.store(false, Ordering::Relaxed);
             for (buf, nbytes, a, b, c, d, e, f) in calls.clone().into_iter().take(calls.len() - 1) {
                 #[rustfmt::skip]
-                _recv_long::<FakeGetter>(
+                _recv_long::<FakeGetter, T>(
                     null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
                 assert_eq! {called.load(Ordering::Relaxed), false};
             }
             let (buf, nbytes, a, b, c, d, e, f) = calls[calls.len() - 1].clone();
             #[rustfmt::skip]
-            _recv_long::<FakeGetter>(
+            _recv_long::<FakeGetter, T>(
                 null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
             assert_eq! {called.load(Ordering::Relaxed), true};
         };
@@ -686,13 +688,18 @@ mod test {
     }
 
     #[test]
-    fn test_many_long_receiver() {
-        let mut rng = thread_rng();
-        let message_payload: Vec<u8> = (0..1234).map(|_| rng.gen()).collect();
-        let mut callback = |_a: Rank, data: &[u8]| {
-            assert_eq!(data, &message_payload[..]);
+    fn test_single_long_receiver() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called1 = called.clone();
+        let callback = |_a: Rank, _b: &[u8]| {
+            called1.store(true, Ordering::Relaxed);
         };
-        let mut c = ContextSetUp::new(&mut callback);
+        _test_single_long_receiver(callback, called);
+    }
+
+    fn _test_many_long_receiver<T: MessageHandler>(callback: T, message_payload: Vec<u8>) {
+        let mut rng = thread_rng();
+        let mut c = ContextSetUp::new(callback);
         set_ptr(&mut c.ctx);
 
         let mut calls = vec![];
@@ -702,26 +709,42 @@ mod test {
         calls.shuffle(&mut rng);
         for (buf, nbytes, a, b, c, d, e, f) in calls.clone() {
             #[rustfmt::skip]
-            _recv_long::<FakeGetter>(
+            _recv_long::<FakeGetter, T>(
                 null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
         }
     }
 
     #[test]
-    fn test_short_long_receiver() {
+    fn test_many_long_receiver() {
         let mut rng = thread_rng();
-        let message_payload: Vec<u8> = (0..50).map(|_| rng.gen()).collect();
-        let mut callback = |_a: Rank, data: &[u8]| {
-            assert_eq!(data, &message_payload[..]);
+        let message_payload: Vec<u8> = (0..1234).map(|_| rng.gen()).collect();
+        let message_payload1 = message_payload.clone();
+        let callback = move |_a: Rank, data: &[u8]| {
+            assert_eq!(data, &message_payload1[..]);
         };
-        let mut c = ContextSetUp::new(&mut callback);
+        _test_many_long_receiver(callback, message_payload);
+    }
+
+    fn _test_short_long_receiver<T: MessageHandler>(callback: T, message_payload: Vec<u8>) {
+        let mut c = ContextSetUp::new(callback);
         set_ptr(&mut c.ctx);
 
         let calls = generate_recv_calls(3, &message_payload[..]);
         assert_eq!(calls.len(), 1);
         let (buf, nbytes, a, b, c, d, e, f) = calls[0];
         #[rustfmt::skip]
-            _recv_long::<FakeGetter>(
-                null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
+        _recv_long::<FakeGetter, T>(
+            null::<*const ()> as gex_Token_t, buf, nbytes, a, b, c, d, e, f,);
+    }
+
+    #[test]
+    fn test_short_long_receiver() {
+        let mut rng = thread_rng();
+        let message_payload: Vec<u8> = (0..50).map(|_| rng.gen()).collect();
+        let message_payload1 = message_payload.clone();
+        let callback = move |_a: Rank, data: &[u8]| {
+            assert_eq!(data, &message_payload1[..]);
+        };
+        _test_short_long_receiver(callback, message_payload);
     }
 }

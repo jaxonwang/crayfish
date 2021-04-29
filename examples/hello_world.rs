@@ -19,13 +19,13 @@ pub fn main() {
 
 
     let a = "hello world!";
-    let mut callback = |src: network::Rank, buf: &[u8]| {
+    let callback = |src: network::Rank, buf: &[u8]| {
         assert_eq!(buf, &payload[..]);
         // assert_eq!(buf.len(), payload.len());
         info!("{} {} bytes from:{} ", a, buf.len(), src.as_i32());
     };
     logging::setup_logger().unwrap();
-    let mut context = network::context::CommunicationContext::new(&mut callback);
+    let mut context = network::context::CommunicationContext::new(callback);
     let sender = context.single_sender();
     let context = context;
 
