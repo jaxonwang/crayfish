@@ -96,7 +96,7 @@ fn quick_sort(ctx: &mut impl ApgasContext, mut nums: Vec<usize>) -> BoxFuture<'s
 
     let neighbor = (here() as usize + 1) % world_size();
     let left_sorted_future = async_create_for_fn_id_0(ctx.spawn(), neighbor as Place, left);
-    let right_sorted_future = async_create_for_fn_id_0(ctx.spawn(), here as Place, right);
+    let right_sorted_future = async_create_for_fn_id_0(ctx.spawn(), here(), right);
 
     // wait for result of sub activities
     async move {
