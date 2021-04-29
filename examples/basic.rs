@@ -153,6 +153,12 @@ where
 async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
     // macro
     debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
+    if c < 5000 {
+        let here = global_id::here();
+        let world_size = global_id::world_size();
+        let dst_place = ((here + 1) as usize % world_size) as Place;
+        async_create_no_wait_for_fn_id_0(ctx, dst_place, a.clone(), b.clone(), c + 1);
+    }
     R { a, b, c: c + 1 }
 }
 
@@ -275,12 +281,12 @@ async fn finish() {
     let here = global_id::here();
     let world_size = global_id::world_size();
     let dst_place = ((here + 1) as usize % world_size) as Place;
-    let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
-
-    debug!("waiting return of the function");
-    let ret = f.await; // if await, remove it from activity list this finish block will wait
-    debug!("got return value {:?}", ret);
-    async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 4);
+    // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
+    //
+    // debug!("waiting return of the function");
+    // let ret = f.await; // if await, remove it from activity list this finish block will wait
+    // debug!("got return value {:?}", ret);
+    async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 1);
 
     wait_all(ctx).await;
     info!("Main finished")
@@ -318,9 +324,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trigger = hub.get_trigger();
 
     // start network loop
-    context.init(); // global barrier to init network
     info!("start network loop");
-    let network_thread = thread::spawn(move || context.run()); // run in a independent thread
+    let network_thread = thread::spawn(move || {
+        // global barrier to init network, must init and run in the same thread,
+        // otherwise the callback would be invoked at different thread, result in
+        // fetch channel twice
+        context.init(); 
+        context.run();
+    }); // run in a independent thread
 
     // start hub loop
     info!("start execution hub");
