@@ -196,7 +196,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
     let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
-    // debug!("long recv {} bytes from {} at mem {:?} {}", _nbytes, src, buf, chunk_size);
+    trace!("long recv {} bytes from {} at mem {:?} {}", _nbytes, src, buf, chunk_size);
 
     let call_handler = |buf: &[u8]| unsafe {
         debug_assert!(
@@ -411,6 +411,7 @@ where
         use mpsc::TryRecvError::*;
         // message loop
         loop {
+            gasnet_ampoll();
             match self.message_chan.try_recv() {
                 Ok((dst, msg)) => self.send(dst, &msg[..]),
                 Err(Empty) => continue,     // TODO: backoff?
@@ -445,6 +446,7 @@ where
 
     // interrupt safe, no malloc
     pub fn send(&mut self, dst: Rank, message: &[u8]) {
+        trace!("sending to {} with message len {}", dst, message.len());
         // NOTE: not thread safe!
         if message.len() < self.max_global_medium_request_len {
             unsafe {

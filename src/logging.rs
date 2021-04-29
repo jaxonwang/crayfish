@@ -29,6 +29,7 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
         Err(_) => "".to_string(),
     };
 
+    // TODO upper case
     let debug_level = match env_value.as_str() {
         "trace" => log::LevelFilter::Trace,
         "debug" => log::LevelFilter::Debug,

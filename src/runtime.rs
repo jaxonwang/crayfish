@@ -30,9 +30,9 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time;
-use tokio::sync::oneshot;
 use tokio::sync::mpsc::unbounded_channel;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 
 extern crate futures;
 extern crate once_cell;
@@ -63,7 +63,8 @@ type TaskWaitChannels = Vec<(
     Option<Sender<Box<WaitRequest>>>,
     Option<Receiver<Box<WaitRequest>>>, // a channel to send channel
 )>;
-type MaybeBufferChannel = ( // send squash buffer from network layer to distrbutor
+type MaybeBufferChannel = (
+    // send squash buffer from network layer to distrbutor
     Option<Sender<Box<dyn AbstractSquashBuffer>>>,
     Option<Receiver<Box<dyn AbstractSquashBuffer>>>,
 );
@@ -97,11 +98,11 @@ pub fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u
 }
 
 // take the receiver from static, to init distributor
-pub fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>>{
+pub fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>> {
     NETWORK_BUFFER_CHANNEL.lock().unwrap().1.take().unwrap()
 }
 
-pub fn take_worker_task_receiver() -> UnboundedReceiver<Box<TaskItem>>{
+pub fn take_worker_task_receiver() -> UnboundedReceiver<Box<TaskItem>> {
     WORKER_TASK_QUEUE.lock().unwrap().1.take().unwrap()
 }
 
@@ -270,6 +271,7 @@ where
         if dst_buffer.0.is_empty() || dst_buffer.1 + MAX_BUFFER_LIFETIME > time::Instant::now() {
             return; // young enough, do nothing
         }
+        trace!("buffer:{} timeout. send", idx);
         dst_buffer.0.squash_all();
         let bytes = dst_buffer.0.serialize_and_clear();
         self.sender.send_msg(Rank::from_usize(idx), bytes);
@@ -397,11 +399,13 @@ where
     fn handle_item(&mut self, item: Box<TaskItem>) {
         if item.place() == global_id::here() {
             if item.is_ret() {
+                trace!("got return item to self {:?}", item);
                 // if is finish but waited here, the item.place() == here()
                 let activity_id = item.activity_id();
                 let finish_id = activity_id.get_finish_id();
                 let mut tree_all_done = false;
                 if item.is_waited() {
+                    trace!("waited single {:?}", item);
                     // waited by a single wait
                     if let Some(sender) = self.single_wait.remove(&activity_id.get_lower()) {
                         sender.send(item).unwrap();
@@ -412,11 +416,13 @@ where
                     }
                 // waited by an all wait
                 } else if let Some(tree) = self.calling_trees.get_mut(&finish_id) {
+                    trace!("waited all {:?}", item);
                     tree.activity_done(*item);
                     if tree.all_done() {
                         tree_all_done = true; // use another flag to pass borrow checker
                     }
                 } else {
+                    trace!("waited free {:?}", item);
                     // not waited, go to free items
                     if let Some(task_items) = self.free_items.get_mut(&finish_id) {
                         task_items.push(item);
@@ -435,6 +441,7 @@ where
                 self.worker_task_queue.send(item).unwrap(); // executor quit first
             }
         } else {
+            trace!("got item to remote: {:?}", item);
             // not local, send to remote
             self.distributor.send(item);
         }
@@ -459,6 +466,7 @@ where
 
         match w_item {
             WaitItem::One(aid) => {
+                trace!("got single request {}", aid);
                 if let Some(task_item) = self.single_wait_free_items.remove(&aid.get_lower()) {
                     // already finished, directly send back
                     w_sender.send(task_item).unwrap();
@@ -467,6 +475,7 @@ where
                 }
             }
             WaitItem::All(ctx) => {
+                trace!("got all request :{:?}", ctx);
                 let finish_id = ctx.finish_id;
                 let mut new_tree = CallingTree::new(ctx.sub_activities);
                 // if some free item already exist
@@ -525,6 +534,7 @@ where
 
             // receive from remote
             while let Some(item) = self.distributor.recv() {
+                trace!("got item from remote {:?}", item);
                 self.handle_item(item);
             }
 
