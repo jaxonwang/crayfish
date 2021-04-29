@@ -211,8 +211,8 @@ async fn finish() {
     // ctx contains a new finish id now
     let mut rng = rand::rngs::StdRng::from_entropy();
     let mut nums: Vec<usize> = (0..1000).collect();
-    info!("before sorting: {:?}", nums);
     nums.shuffle(&mut rng);
+    info!("before sorting: {:?}", nums);
     let sorted = quick_sort(&mut ctx, nums).await;
     info!("sorted: {:?}", sorted);
 
