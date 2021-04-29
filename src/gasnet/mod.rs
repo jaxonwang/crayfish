@@ -407,8 +407,8 @@ impl<'a> CommunicationContext<'a> {
         loop {
             match self.message_chan.try_recv() {
                 Ok((dst, msg)) => self.send(dst, &msg[..]),
-                Err(Empty) => continue, // spin! since cpu thourhput could be smaller than network
-                Err(Disconnected) => break,
+                Err(Empty) => continue, // TODO: backoff?
+                Err(Disconnected) => break, // the upper layer stop fist
             }
         }
         debug!("Wait until all peers finish their message");

@@ -31,13 +31,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time;
 use tokio::sync::oneshot;
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 
 extern crate futures;
 extern crate once_cell;
 
 pub fn init_worker_task_queue() {
     let mut q = WORKER_TASK_QUEUE.lock().unwrap();
-    let (task_tx, task_rx) = channel();
+    let (task_tx, task_rx) = unbounded_channel();
     *q = (Some(task_tx), Some(task_rx));
 }
 
@@ -52,8 +54,8 @@ pub fn init_task_item_channels() {
     }
 }
 type MaybeTaskChannel = (
-    Option<Sender<Box<TaskItem>>>,
-    Option<Receiver<Box<TaskItem>>>,
+    Option<UnboundedSender<Box<TaskItem>>>,
+    Option<UnboundedReceiver<Box<TaskItem>>>,
 );
 type TaskWaitChannels = Vec<(
     Option<Sender<Box<TaskItem>>>,
@@ -97,6 +99,10 @@ pub fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u
 // take the receiver from static, to init distributor
 pub fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>>{
     NETWORK_BUFFER_CHANNEL.lock().unwrap().1.take().unwrap()
+}
+
+pub fn take_worker_task_receiver() -> UnboundedReceiver<Box<TaskItem>>{
+    WORKER_TASK_QUEUE.lock().unwrap().1.take().unwrap()
 }
 
 #[derive(Debug)]
@@ -344,7 +350,7 @@ where
     single_wait: FxHashMap<ActivityIdLower, oneshot::Sender<Box<TaskItem>>>,
     stop: Arc<AtomicBool>,
     distributor: D,
-    worker_task_queue: Sender<Box<TaskItem>>,
+    worker_task_queue: UnboundedSender<Box<TaskItem>>,
 }
 
 pub struct ExecutionHubTrigger {
@@ -428,7 +434,7 @@ where
                 }
             } else {
                 // is request
-                self.worker_task_queue.send(item).unwrap();
+                self.worker_task_queue.send(item).unwrap(); // executor quit first
             }
         } else {
             // not local, send to remote
@@ -483,6 +489,7 @@ where
 
     pub fn run(&mut self) {
         while !self.stop.load(Ordering::Acquire) {
+            // TODO: backoff
             // receive task item
             for i in 0..self.task_item_receivers.len() {
                 let mut to_remove = false;
@@ -836,14 +843,13 @@ mod test {
     #[test]
     fn test_local_worker_task_queue() {
         let _e = ExecutorHubSetUp::default();
-        let mut q = WORKER_TASK_QUEUE.lock().unwrap();
-        let worker_receiver = q.1.take().unwrap();
+        let mut worker_receiver = take_worker_task_receiver();
         let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
         builder.arg(1usize);
         builder.arg(0.5f64);
         builder.arg_squash(A { value: 123 });
         ConcreteContext::send(builder.build_box());
-        let item = worker_receiver.recv().unwrap();
+        let item = worker_receiver.blocking_recv().unwrap();
         let mut e = TaskItemExtracter::new(*item);
         assert_eq!(e.fn_id(), 1);
         assert_eq!(e.place(), global_id::here());
@@ -851,10 +857,6 @@ mod test {
         assert_eq!(e.arg::<usize>(), 1);
         assert_eq!(e.arg::<f64>(), 0.5);
         assert_eq!(e.arg_squash::<A>(), A { value: 123 });
-        assert!(matches!(
-            worker_receiver.try_recv().unwrap_err(),
-            mpsc::TryRecvError::Empty
-        ));
     }
 
     use crate::activity::test::ConcreteDispatch;

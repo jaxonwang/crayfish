@@ -1,6 +1,8 @@
-use once_cell::sync::OnceCell;
+use crate::network::Rank;
 use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use std::cell::Cell;
+use std::convert::TryInto;
 use std::sync::Mutex;
 extern crate once_cell;
 
@@ -46,13 +48,17 @@ impl ActivityIdMethods for ActivityId {
 
 static HERE_STATIC: OnceCell<Place> = OnceCell::new();
 // two level mutex here, but I think the code is clear
-static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(||Mutex::new(0)); 
+static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(|| Mutex::new(0));
 
 thread_local! {
     pub static HERE_LOCAL: Cell<Option<Place>> = Cell::new(None);
     static WORKER_ID: Cell<Option<WorkerId>> = Cell::new(None);
     static NEXT_FINISH_LOCAL_ID: Cell<FinishLocalId> = Cell::new(0); // start from 1
     static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
+}
+
+pub fn init_here(here: Rank) {
+    HERE_STATIC.set(here.as_i32().try_into().unwrap()).unwrap();
 }
 
 pub fn here() -> Place {
@@ -116,16 +122,17 @@ pub mod test {
     use super::*;
     use std::collections::HashSet;
     use std::sync::mpsc;
-    use std::sync::MutexGuard;
     use std::sync::Mutex;
+    use std::sync::MutexGuard;
     use std::thread;
 
     const TEST_HERE: Place = 7;
-    static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(||Mutex::new(false));
+    static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
     pub fn global_id_reset_everything() {
-        match HERE_STATIC.set(TEST_HERE){ // only set once
-            _ => ()
+        match HERE_STATIC.set(TEST_HERE) {
+            // only set once
+            _ => (),
         }
         *NEXT_WORKER_ID.lock().unwrap() = 0;
         HERE_LOCAL.with(|h| h.set(None));
@@ -139,7 +146,8 @@ pub mod test {
 
     impl<'a> TestGuardForStatic<'a> {
         pub fn new() -> Self {
-            let ret = TestGuardForStatic { // must get test lock first
+            let ret = TestGuardForStatic {
+                // must get test lock first
                 _guard: TEST_LOCK.lock().unwrap(),
             };
             global_id_reset_everything();
