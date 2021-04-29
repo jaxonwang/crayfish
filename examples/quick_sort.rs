@@ -1,17 +1,19 @@
+use futures::future::BoxFuture;
 use futures::FutureExt;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 use rust_apgas::activity::copy_panic_payload;
-use rust_apgas::activity::deserialize_entry_to_do_avoid_conflict;
-use rust_apgas::activity::serialize_packed_to_do_avoid_conflict;
 use rust_apgas::activity::ActivityId;
 use rust_apgas::activity::FunctionLabel;
 use rust_apgas::activity::ProperDispatcher;
 use rust_apgas::activity::SquashBufferFactory;
 use rust_apgas::activity::SquashOperation;
-use rust_apgas::activity::Squashable;
 use rust_apgas::activity::TaskItem;
 use rust_apgas::activity::TaskItemBuilder;
 use rust_apgas::activity::TaskItemExtracter;
 use rust_apgas::global_id;
+use rust_apgas::global_id::here;
+use rust_apgas::global_id::world_size;
 use rust_apgas::global_id::ActivityIdMethods;
 use rust_apgas::global_id::FinishIdMethods;
 use rust_apgas::logging;
@@ -32,69 +34,14 @@ use rust_apgas::runtime::Distributor;
 use rust_apgas::runtime::ExecutionHub;
 use serde::Deserialize;
 use serde::Serialize;
-use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::thread;
 
 extern crate futures;
+extern crate rand;
 extern crate rust_apgas;
 extern crate serde;
 extern crate tokio;
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-pub struct A {
-    pub value: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct AOut {
-    last: usize,
-    diffs: Vec<usize>,
-}
-
-impl Squashable for A {
-    type Squashed = AOut;
-    fn fold(&self, acc: &mut Self::Squashed) {
-        assert!(acc.last <= self.value);
-        acc.diffs.push((self.value - acc.last).try_into().unwrap());
-        acc.last = self.value;
-    }
-    fn extract(out: &mut Self::Squashed) -> Option<Self> {
-        out.diffs.pop().map(|x| {
-            let ret = out.last;
-            out.last = out.last - x as usize;
-            A { value: ret }
-        })
-    }
-    fn arrange<L>(l: &mut [(Box<Self>, L)]) {
-        l.sort_by(|(a0, _), (a1, _)| a0.cmp(a1));
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-pub struct B {
-    pub value: u8,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
-pub struct BOut {
-    list: Vec<u8>,
-}
-impl Squashable for B {
-    type Squashed = BOut;
-    fn fold(&self, acc: &mut Self::Squashed) {
-        acc.list.push(self.value);
-    }
-    fn extract(out: &mut Self::Squashed) -> Option<Self> {
-        out.list.pop().map(|value| B { value })
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct R {
-    a: A,
-    b: B,
-    c: i32,
-}
 
 use rust_apgas::activity::SquashDispatch;
 use rust_apgas::activity::SquashedMapValue;
@@ -109,13 +56,7 @@ where
     Op: SquashOperation,
 {
     fn dispatch_for_squashable(typeid: TypeId, t: Op::DataType) -> Op::ReturnType {
-        if typeid == TypeId::of::<A>() {
-            Op::call::<A>(t)
-        } else if typeid == TypeId::of::<B>() {
-            Op::call::<B>(t)
-        } else {
-            panic!()
-        }
+        panic!()
     }
     fn dispatch_serialize_entry<S>(
         typeid: TypeId,
@@ -125,13 +66,7 @@ where
     where
         S: SerializeMap,
     {
-        if typeid == TypeId::of::<A>() {
-            serialize_packed_to_do_avoid_conflict::<A, S>(v, ser)
-        } else if typeid == TypeId::of::<B>() {
-            serialize_packed_to_do_avoid_conflict::<B, S>(v, ser)
-        } else {
-            panic!()
-        }
+        panic!()
     }
     fn dispatch_deserialize_entry<'de, ACC>(
         typeid: TypeId,
@@ -140,35 +75,48 @@ where
     where
         ACC: MapAccess<'de>,
     {
-        if typeid == TypeId::of::<A>() {
-            deserialize_entry_to_do_avoid_conflict::<A, ACC>(access)
-        } else if typeid == TypeId::of::<B>() {
-            deserialize_entry_to_do_avoid_conflict::<B, ACC>(access)
-        } else {
-            panic!()
-        }
+        panic!()
     }
 }
 
-async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
-    // macro
-    debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
-    if c < 5000 {
-        let here = global_id::here();
-        let world_size = global_id::world_size();
-        let dst_place = ((here + 1) as usize % world_size) as Place;
-        async_create_no_wait_for_fn_id_0(ctx, dst_place, a.clone(), b.clone(), c + 1);
+fn quick_sort(ctx: &mut impl ApgasContext, mut nums: Vec<usize>) -> BoxFuture<'static, Vec<usize>> {
+    // BoxFuture<'static, Vec<usize>> {
+    info!("sorting vector of len: {}", nums.len());
+    if nums.len() < 10 {
+        return async move {
+            nums.sort();
+            nums
+        }
+        .boxed();
     }
-    R { a, b, c: c + 1 }
+    let pivot = nums[0];
+    let rest = &nums[1..];
+    let left: Vec<_> = rest.iter().filter(|n| **n < pivot).cloned().collect();
+    let right: Vec<_> = rest.iter().filter(|n| **n >= pivot).cloned().collect();
+
+    let neighbor = (here() as usize + 1) % world_size();
+    let left_sorted_future = async_create_for_fn_id_0(ctx.spawn(), neighbor as Place, left);
+    let right_sorted_future = async_create_for_fn_id_0(ctx.spawn(), here as Place, right);
+
+    // wait for result of sub activities
+    async move {
+        // overlap the local & remote computing
+        let right_sorted = right_sorted_future.await;
+        let mut left_sorted = left_sorted_future.await;
+        left_sorted.push(pivot);
+        left_sorted.extend_from_slice(&right_sorted[..]);
+        left_sorted
+    }
+    .boxed()
 }
 
 // block until real function finished
-async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: A, b: B, c: i32) {
+async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: Vec<usize>) {
     let fn_id = 0; // macro
     let finish_id = my_activity_id.get_finish_id();
     let mut ctx = ConcreteContext::inherit(finish_id);
     // ctx seems to be unwind safe
-    let future = AssertUnwindSafe(real_fn(&mut ctx, a, b, c)); //macro
+    let future = AssertUnwindSafe(quick_sort(&mut ctx, a)); //macro
     let result = future.catch_unwind().await;
     let stripped_result = match &result {
         // copy payload
@@ -210,37 +158,25 @@ async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
         my_activity_id,
         my_activity_id.get_spawned_place()
     );
-    execute_and_send_fn0(
-        my_activity_id,
-        waited,
-        e.arg_squash(),
-        e.arg_squash(),
-        e.arg(),
-    )
-    .await; // macro
+    execute_and_send_fn0(my_activity_id, waited, e.arg()).await; // macro
 }
 
 // the desugered at async and wait
-fn async_create_for_fn_id_0( // TODO: dont' use &mut ctx, for boxed lifetime
-    ctx: &mut impl ApgasContext,
+fn async_create_for_fn_id_0(
+    my_activity_id: ActivityId,
     dst_place: Place,
-    a: A,
-    b: B,
-    c: i32,
-) -> impl futures::Future<Output = R> {
+    nums: Vec<usize>,
+) -> impl futures::Future<Output = Vec<usize>> {
     // macro
-    let my_activity_id = ctx.spawn(); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
-    let f = wait_single::<R>(my_activity_id); // macro
+    let f = wait_single::<Vec<usize>>(my_activity_id); // macro
     if dst_place == global_id::here() {
-        tokio::spawn(execute_and_send_fn0(my_activity_id, true, a, b, c)); // macro
+        tokio::spawn(execute_and_send_fn0(my_activity_id, true, nums)); // macro
     } else {
         trace!("spawn activity:{} at place: {}", my_activity_id, dst_place);
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
-        builder.arg_squash(a); //  macro
-        builder.arg_squash(b); // macro
-        builder.arg(c); //macro
+        builder.arg(nums); //macro
         builder.waited();
         let item = builder.build_box();
         ConcreteContext::send(item);
@@ -252,9 +188,7 @@ fn async_create_for_fn_id_0( // TODO: dont' use &mut ctx, for boxed lifetime
 fn async_create_no_wait_for_fn_id_0(
     ctx: &mut impl ApgasContext,
     dst_place: Place,
-    a: A,
-    b: B,
-    c: i32,
+    nums: Vec<usize>,
 ) {
     // macro
     let my_activity_id = ctx.spawn(); // register to remote
@@ -262,12 +196,10 @@ fn async_create_no_wait_for_fn_id_0(
 
     if dst_place == global_id::here() {
         // no wait, set flag = flase
-        tokio::spawn(execute_and_send_fn0(my_activity_id, false, a, b, c)); // macro
+        tokio::spawn(execute_and_send_fn0(my_activity_id, false, nums)); // macro
     } else {
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
-        builder.arg_squash(a); //  macro
-        builder.arg_squash(b); // macro
-        builder.arg(c); //macro
+        builder.arg(nums); //macro
         let item = builder.build_box();
         ConcreteContext::send(item);
     }
@@ -277,16 +209,12 @@ fn async_create_no_wait_for_fn_id_0(
 async fn finish() {
     let mut ctx = ConcreteContext::new_frame();
     // ctx contains a new finish id now
-    //
-    let here = global_id::here();
-    let world_size = global_id::world_size();
-    let dst_place = ((here + 1) as usize % world_size) as Place;
-    // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
-    //
-    // debug!("waiting return of the function");
-    // let ret = f.await; // if await, remove it from activity list this finish block will wait
-    // debug!("got return value {:?}", ret);
-    async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 1);
+    let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut nums: Vec<usize> = (0..1000).collect();
+    info!("before sorting: {:?}", nums);
+    nums.shuffle(&mut rng);
+    let sorted = quick_sort(&mut ctx, nums).await;
+    info!("sorted: {:?}", sorted);
 
     wait_all(ctx).await;
     info!("Main finished")
@@ -329,7 +257,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         // global barrier to init network, must init and run in the same thread,
         // otherwise the callback would be invoked at different thread, result in
         // fetch channel twice
-        context.init(); 
+        context.init();
         context.run();
     }); // run in a independent thread
 
