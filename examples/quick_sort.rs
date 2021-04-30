@@ -79,27 +79,26 @@ where
     }
 }
 
-fn quick_sort(ctx: &mut impl ApgasContext, mut nums: Vec<usize>) -> BoxFuture<'static, Vec<usize>> {
-    // BoxFuture<'static, Vec<usize>> {
-    info!("sorting vector of len: {}", nums.len());
-    if nums.len() < 10 {
-        return async move {
-            nums.sort();
-            nums
-        }
-        .boxed();
-    }
-    let pivot = nums[0];
-    let rest = &nums[1..];
-    let left: Vec<_> = rest.iter().filter(|n| **n < pivot).cloned().collect();
-    let right: Vec<_> = rest.iter().filter(|n| **n >= pivot).cloned().collect();
-
-    let neighbor = (here() as usize + 1) % world_size();
-    let left_sorted_future = async_create_for_fn_id_0(ctx.spawn(), neighbor as Place, left);
-    let right_sorted_future = async_create_for_fn_id_0(ctx.spawn(), here(), right);
-
-    // wait for result of sub activities
+fn quick_sort<'a>(
+    ctx: &'a mut impl ApgasContext,
+    mut nums: Vec<usize>,
+) -> BoxFuture<'a, Vec<usize>> {
     async move {
+        info!("sorting vector of len: {}", nums.len());
+        if nums.len() < 10 {
+            nums.sort();
+            return nums;
+        }
+        let pivot = nums[0];
+        let rest = &nums[1..];
+        let left: Vec<_> = rest.iter().filter(|n| **n < pivot).cloned().collect();
+        let right: Vec<_> = rest.iter().filter(|n| **n >= pivot).cloned().collect();
+
+        let neighbor = (here() as usize + 1) % world_size();
+
+        // wait for result of sub activities
+        let left_sorted_future = async_create_for_fn_id_0(ctx.spawn(), neighbor as Place, left);
+        let right_sorted_future = async_create_for_fn_id_0(ctx.spawn(), here(), right);
         // overlap the local & remote computing
         let right_sorted = right_sorted_future.await;
         let mut left_sorted = left_sorted_future.await;

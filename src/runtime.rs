@@ -151,7 +151,7 @@ fn get_wait_request_sender_ref() -> &'static Sender<Box<WaitRequest>> {
     })
 }
 
-pub trait ApgasContext {
+pub trait ApgasContext : Send{
     fn inherit(finish_id: FinishId) -> Self;
     fn new_frame() -> Self;
     fn spawned(self) -> Vec<ActivityId>;
