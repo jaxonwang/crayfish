@@ -3,6 +3,7 @@ use crate::activity::FunctionLabel;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemExtracter;
 use crate::place::Place;
+use crate::global_id::ActivityIdMethods;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
@@ -82,7 +83,7 @@ impl CallingTree {
         let mut ex = TaskItemExtracter::new(item);
 
         let fn_id = ex.fn_id();
-        let place = ex.place();
+        let place = ex.activity_id().get_spawned_place();
         let activity_id = ex.activity_id();
         let sub_activities = ex.sub_activities();
         let panic_payload = match ex.ret_panic() {
@@ -152,8 +153,8 @@ impl CallingTree {
     pub fn panic_backtrace(self) -> Option<String> {
         let format_frame = |frameinfo: FrameInfo| {
             let mut line = format!(
-                "At place: {} function: {}",
-                frameinfo.place, frameinfo.fn_id
+                "at function: {} spawned by place {}",
+                frameinfo.fn_id, frameinfo.place,
             );
             if let Some(msg) = frameinfo.panic_payload {
                 line.push_str(&format!(" panic: {}", msg));
