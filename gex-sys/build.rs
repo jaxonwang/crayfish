@@ -31,7 +31,6 @@ const GASNET_WRAPPER: &str = "gasnet_wrapper";
 const GASNET_LIBAMUDP: &str = "amudp";
 
 pub fn main() {
-
     // TODO: cleanup everythin before install
 
     // config contains version info
@@ -47,6 +46,9 @@ pub fn main() {
     bt.arg("Bootstrap").current_dir(&working_dir);
     if !working_dir.join("configure").exists() {
         // no re-bootstrap
+        if !working_dir.join("Bootstrap").exists() {
+            panic!("Can not find the Bootstrap script for GASNET. Did your forget \"git clone --recursive\"?")
+        }
         run_command("bootstrap", &mut bt);
     }
 
@@ -97,11 +99,11 @@ pub fn main() {
     let libgasnet = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
     println!("cargo:rustc-link-lib=static={}", libgasnet);
     println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
-    if cfg!(target_os="macos") {
+    if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
-    } else if cfg!(target_os="linux"){
+    } else if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=dylib=stdc++");
-    } else{
+    } else {
         panic!("platform unsupported")
     }
     println!("cargo:rustc-link-search=native={}", libdir.display());
