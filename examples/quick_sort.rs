@@ -19,6 +19,7 @@ use rust_apgas::global_id::FinishIdMethods;
 use rust_apgas::logging;
 use rust_apgas::logging::*;
 use rust_apgas::network;
+use rust_apgas::network::CollectiveOperator;
 use rust_apgas::network::Rank;
 use rust_apgas::place::Place;
 use rust_apgas::runtime::init_task_item_channels;
@@ -243,6 +244,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // prepare distributor
     let sender = context.single_sender();
+    let coll = context.collective_operator();
     let buffer_receiver = take_message_buffer_receiver();
     let distributor = Distributor::new(factory, world_size, sender, buffer_receiver);
 
@@ -252,11 +254,15 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // start network loop
     info!("start network loop");
+    // coll must not perform barrier before init
+    let (init_done_s, init_done_r) = std::sync::mpsc::channel::<()>();
+    // this thread is the only thread perfroming send/recv 
     let network_thread = thread::spawn(move || {
         // global barrier to init network, must init and run in the same thread,
         // otherwise the callback would be invoked at different thread, result in
         // fetch channel twice
         context.init();
+        init_done_s.send(()).unwrap();
         context.run();
     }); // run in a independent thread
 
@@ -273,22 +279,31 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(task) = task_receiver.recv().await {
             tokio::spawn(real_fn_wrap_execute_from_remote(*task));
         }
+        debug!("worker task loop stops");
     };
 
     if global_id::here() == 0 {
         // main
-        rt.block_on(async {
+        rt.block_on(async move {
             tokio::spawn(worker_loop);
-            tokio::spawn(finish());
+            tokio::spawn(finish()).await.unwrap(); // main will return only when everything
         });
-        // TODO: send kill to every one;
     } else {
-        rt.block_on(worker_loop);
+        rt.block_on(async move {
+            tokio::spawn(worker_loop);
+        });
     }
+
+    // should not perform any network before init done
+    init_done_r.recv().unwrap();
+    // wait till all finishes;
+    coll.barrier();
+    trigger.stop();
+    drop(coll); // drop coll to stop network context
 
     hub_thread.join().unwrap();
     network_thread.join().unwrap();
+    info!("exit gracefully");
 
-    info!("exit gracefully!");
     Ok(())
 }
