@@ -5,7 +5,6 @@ use rust_apgas::activity::serialize_packed_to_do_avoid_conflict;
 use rust_apgas::activity::ActivityId;
 use rust_apgas::activity::FunctionLabel;
 use rust_apgas::activity::ProperDispatcher;
-use rust_apgas::activity::SquashBufferFactory;
 use rust_apgas::activity::SquashOperation;
 use rust_apgas::activity::Squashable;
 use rust_apgas::activity::TaskItem;
@@ -14,27 +13,19 @@ use rust_apgas::activity::TaskItemExtracter;
 use rust_apgas::global_id;
 use rust_apgas::global_id::ActivityIdMethods;
 use rust_apgas::global_id::FinishIdMethods;
-use rust_apgas::logging;
 use rust_apgas::logging::*;
-use rust_apgas::network;
-use rust_apgas::network::Rank;
 use rust_apgas::place::Place;
-use rust_apgas::runtime::init_task_item_channels;
-use rust_apgas::runtime::init_worker_task_queue;
-use rust_apgas::runtime::message_recv_callback;
-use rust_apgas::runtime::take_message_buffer_receiver;
-use rust_apgas::runtime::take_worker_task_receiver;
 use rust_apgas::runtime::wait_all;
 use rust_apgas::runtime::wait_single;
 use rust_apgas::runtime::ApgasContext;
 use rust_apgas::runtime::ConcreteContext;
-use rust_apgas::runtime::Distributor;
-use rust_apgas::runtime::ExecutionHub;
 use serde::Deserialize;
 use serde::Serialize;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::thread;
+
+use rust_apgas::essence::genesis;
 
 extern crate futures;
 extern crate rust_apgas;
@@ -153,7 +144,7 @@ where
 async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
     // macro
     debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
-    if c < 5000 {
+    if c < 200 {
         let here = global_id::here();
         let world_size = global_id::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
@@ -221,7 +212,8 @@ async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
 }
 
 // the desugered at async and wait
-fn async_create_for_fn_id_0( // TODO: dont' use &mut ctx, for boxed lifetime
+fn async_create_for_fn_id_0(
+    // TODO: dont' use &mut ctx, for boxed lifetime
     ctx: &mut impl ApgasContext,
     dst_place: Place,
     a: A,
@@ -275,93 +267,29 @@ fn async_create_no_wait_for_fn_id_0(
 
 // desugered finish
 async fn finish() {
-    let mut ctx = ConcreteContext::new_frame();
-    // ctx contains a new finish id now
-    //
-    let here = global_id::here();
-    let world_size = global_id::world_size();
-    let dst_place = ((here + 1) as usize % world_size) as Place;
-    // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
-    //
-    // debug!("waiting return of the function");
-    // let ret = f.await; // if await, remove it from activity list this finish block will wait
-    // debug!("got return value {:?}", ret);
-    async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 1);
+    if global_id::here() == 0 {
+        let mut ctx = ConcreteContext::new_frame();
+        // ctx contains a new finish id now
+        //
+        let here = global_id::here();
+        let world_size = global_id::world_size();
+        let dst_place = ((here + 1) as usize % world_size) as Place;
+        // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
+        //
+        // debug!("waiting return of the function");
+        // let ret = f.await; // if await, remove it from activity list this finish block will wait
+        // debug!("got return value {:?}", ret);
+        async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 1);
 
-    wait_all(ctx).await;
-    info!("Main finished")
+        wait_all(ctx).await;
+        info!("Main finished")
+    }
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // logger
-    logging::setup_logger().unwrap();
-
-    // prepare callback
-    let msg_recv_callback = |src: Rank, data: &[u8]| {
-        message_recv_callback::<SquashBufferFactory<ConcreteDispatch>>(src, data)
-    };
-
-    // start network context
-    let mut context = network::context::CommunicationContext::new(msg_recv_callback);
-    let world_size = context.world_size();
-
-    // prepare factories
-    let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
-
-    // init static data for communications
-    init_worker_task_queue();
-    init_task_item_channels();
-    global_id::init_here(context.here());
-    global_id::init_world_size(world_size);
-
-    // prepare distributor
-    let sender = context.single_sender();
-    let buffer_receiver = take_message_buffer_receiver();
-    let distributor = Distributor::new(factory, world_size, sender, buffer_receiver);
-
-    // prepare execution hub
-    let mut hub = ExecutionHub::new(distributor);
-    let trigger = hub.get_trigger();
-
-    // start network loop
-    info!("start network loop");
-    let network_thread = thread::spawn(move || {
-        // global barrier to init network, must init and run in the same thread,
-        // otherwise the callback would be invoked at different thread, result in
-        // fetch channel twice
-        context.init(); 
-        context.run();
-    }); // run in a independent thread
-
-    // start hub loop
-    info!("start execution hub");
-    let hub_thread = thread::spawn(move || hub.run());
-
-    // start workers
-    let rt = tokio::runtime::Runtime::new()?;
-
-    // worker loop
-    let worker_loop = async {
-        let mut task_receiver = take_worker_task_receiver();
-        while let Some(task) = task_receiver.recv().await {
-            tokio::spawn(real_fn_wrap_execute_from_remote(*task));
-        }
-    };
-
-    if global_id::here() == 0 {
-        // main
-        rt.block_on(async {
-            tokio::spawn(worker_loop);
-            tokio::spawn(finish());
-        });
-        // TODO: send kill to every one;
-    } else {
-        rt.block_on(worker_loop);
-    }
-
-    hub_thread.join().unwrap();
-    network_thread.join().unwrap();
-
-    info!("exit gracefully!");
-    Ok(())
+pub fn main() {
+    genesis(
+        finish(),
+        real_fn_wrap_execute_from_remote,
+        ConcreteDispatch {},
+    );
 }

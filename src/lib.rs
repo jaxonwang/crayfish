@@ -8,5 +8,6 @@ pub mod network; // TODO: mark private
 pub mod place;
 pub mod runtime;
 mod serialization;
+pub mod essence;
 
 mod prelude {}
