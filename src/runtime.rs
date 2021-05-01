@@ -541,6 +541,7 @@ where
             // send pending buffers
             self.distributor.poll();
         }
+        debug!("Execution Hub shuts down");
     }
 
     pub fn get_trigger(&self) -> ExecutionHubTrigger {

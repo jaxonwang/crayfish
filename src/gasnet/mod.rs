@@ -8,6 +8,8 @@ use bit_vec::BitVec;
 use gex_sys::*;
 use rustc_hash::FxHashMap;
 use std::convert::TryInto;
+use std::mem;
+use std::mem::MaybeUninit;
 use std::os::raw::*;
 use std::ptr::null_mut;
 use std::slice;
@@ -35,6 +37,13 @@ impl GexRank for Rank {
 
 type MessageId = usize;
 
+enum NetworkOperation {
+    Message(Rank, Vec<u8>),
+    Barrier(mpsc::SyncSender<()>),
+    Broadcast(Rank, *mut u8, usize, mpsc::SyncSender<()>),
+}
+unsafe impl Send for NetworkOperation {} // ptr is not send, but we are playing with unsafe!
+
 pub struct CommunicationContext<T> {
     // endpoint: gex_EP_t, // thread safe handler
     team: gex_TM_t,
@@ -56,10 +65,13 @@ pub struct CommunicationContext<T> {
 
     // for sending
     next_message_id: usize,
-    message_chan: mpsc::Receiver<(Rank, Vec<u8>)>,
-    for_single_sender: Option<mpsc::Sender<(Rank, Vec<u8>)>>,
+    op_receiver: mpsc::Receiver<NetworkOperation>,
+    op_sender: Option<mpsc::Sender<NetworkOperation>>, // set to option, will drop after run
     sent_fragment_id: Vec<usize>,
     ack_fragment_id: Vec<AtomicUsize>,
+
+    // for collective
+    barrier_event: Option<(gex_Event_t, mpsc::SyncSender<()>)>,
 }
 
 unsafe impl<T> Send for CommunicationContext<T> where T: MessageHandler {}
@@ -196,7 +208,13 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
     let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
-    trace!("long recv {} bytes from {} at mem {:?} {}", _nbytes, src, buf, chunk_size);
+    trace!(
+        "long recv {} bytes from {} at mem {:?} {}",
+        _nbytes,
+        src,
+        buf,
+        chunk_size
+    );
 
     let call_handler = |buf: &[u8]| unsafe {
         debug_assert!(
@@ -323,11 +341,12 @@ where
             local_rank: Rank::from_gex_rank(gax_system_query_jobrank()),
             world_size: gax_system_query_jobsize() as usize,
             message_buffers: vec![],
-            message_chan: rx,
-            for_single_sender: Some(tx),
+            op_receiver: rx,
+            op_sender: Some(tx),
             next_message_id: 0,
             sent_fragment_id: vec![],
             ack_fragment_id: vec![],
+            barrier_event: None,
         };
 
         logging::set_global_id(context.here().as_i32());
@@ -407,21 +426,56 @@ where
         gex_event_wait(event);
     }
 
+    fn barrier(&mut self, notify: mpsc::SyncSender<()>) {
+        debug_assert!(self.barrier_event.is_none());
+        let event = gex_coll_barrier_nb(self.team);
+        self.barrier_event = Some((event, notify));
+    }
+
+    fn broadcast(&mut self, root: Rank, data: *mut u8, len: usize, notify: mpsc::SyncSender<()>) {
+        // TODO: non blocking broadcast
+        let event = unsafe {
+            gex_coll_broadcast_nb(
+                self.team,
+                root.gex_rank(),
+                data as *mut c_void,
+                data as *mut c_void,
+                len as u64,
+            )
+        };
+        gex_event_wait(event);
+        notify.try_send(()).unwrap();
+    }
+
+    fn poll_barrier(&mut self) {
+        if self.barrier_event.is_some() {
+            let (event, notify) = self.barrier_event.as_ref().unwrap();
+            if gex_event_done(*event) {
+                // if success
+                notify.try_send(()).unwrap();
+                self.barrier_event = None
+            }
+        }
+    }
+
     pub fn run(&mut self) {
         use mpsc::TryRecvError::*;
+        // drop sender, otherwise the channel will never be closed
+        self.op_sender = None;
         // message loop
         loop {
             gasnet_ampoll();
-            match self.message_chan.try_recv() {
-                Ok((dst, msg)) => self.send(dst, &msg[..]),
+            self.poll_barrier();
+            match self.op_receiver.try_recv() {
+                Ok(NetworkOperation::Message(dst, msg)) => self.send(dst, &msg[..]),
+                Ok(NetworkOperation::Barrier(notify)) => self.barrier(notify),
+                Ok(NetworkOperation::Broadcast(root, data, len, notify)) => {
+                    self.broadcast(root, data, len, notify)
+                }
                 Err(Empty) => continue,     // TODO: backoff?
                 Err(Disconnected) => break, // the upper layer stop fist
             }
         }
-        debug!("Wait until all peers finish their message");
-
-        let event = gex_coll_barrier_nb(self.team);
-        gex_event_wait(event);
 
         info!("Shuting down network.");
     }
@@ -517,14 +571,19 @@ where
         }
     }
 
-    pub fn single_sender(&mut self) -> SingleSender {
+    pub fn single_sender(&self) -> SingleSender {
+        // TODO not litmit to single now
         SingleSender {
-            message_chan: self.for_single_sender.take().unwrap(),
+            message_chan: self.op_sender.as_ref().unwrap().clone(),
         }
     }
 
     pub fn collective_operator(&self) -> GexCollectiveOperator {
-        GexCollectiveOperator { team: self.team }
+        GexCollectiveOperator {
+            here: self.local_rank,
+            sender: self.op_sender.as_ref().unwrap().clone(),
+            barrier_event: None,
+        }
     }
 
     pub fn cmd_args(&self) -> &[String] {
@@ -541,27 +600,90 @@ where
 }
 
 pub struct SingleSender {
-    message_chan: mpsc::Sender<(Rank, Vec<u8>)>,
+    message_chan: mpsc::Sender<NetworkOperation>,
 }
 
 impl MessageSender for SingleSender {
     fn send_msg(&self, dst: Rank, message: Vec<u8>) {
-        self.message_chan.send((dst, message)).unwrap();
+        self.message_chan
+            .send(NetworkOperation::Message(dst, message))
+            .unwrap();
     }
 }
 
 pub struct GexCollectiveOperator {
-    team: gex_TM_t,
+    here: Rank,
+    sender: mpsc::Sender<NetworkOperation>,
+    barrier_event: Option<mpsc::Receiver<()>>,
 }
 
-// team is pointer, not send but we know it's ok to share team
-unsafe impl Send for GexCollectiveOperator {}
+const BEEN_WAITED_ERR_MSG: &str = "Barrier has been waited!";
+const NOT_BEEN_WAITED_ERR_MSG: &str = "Barrier has not been called!";
 impl CollectiveOperator for GexCollectiveOperator {
-    fn barrier(&self) {
+    fn barrier_notify(&mut self) {
         // only support global barrier now
-        // TODO I dont know will this interruppt other or not
-        let event = gex_coll_barrier_nb(self.team);
-        gex_event_wait(event);
+        assert!(self.barrier_event.is_none(), "{}", BEEN_WAITED_ERR_MSG);
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
+        self.barrier_event = Some(rx);
+    }
+
+    fn barrier_wait(&mut self) {
+        self.barrier_event
+            .take()
+            .expect(NOT_BEEN_WAITED_ERR_MSG)
+            .recv()
+            .unwrap();
+    }
+
+    /// return true if has completed
+    fn barrier_try(&mut self) -> bool {
+        let success = match self
+            .barrier_event
+            .as_ref()
+            .expect(NOT_BEEN_WAITED_ERR_MSG)
+            .try_recv()
+        {
+            Ok(()) => true,
+            Err(mpsc::TryRecvError::Empty) => false,
+            _ => panic!("in barrier: network side drop the sender!"),
+        };
+        if success {
+            self.barrier_event = None;
+        }
+        success
+    }
+
+    fn barrier(&self) {
+        assert!(self.barrier_event.is_none(), "{}", BEEN_WAITED_ERR_MSG);
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
+        rx.recv().unwrap();
+    }
+
+    fn broadcast<T: Copy>(&self, root: Rank, value: Option<T>) -> T {
+        let mut value = value;
+        let type_size = mem::size_of::<T>();
+        let mut broadcast_value = MaybeUninit::<T>::uninit();
+        let bytes = if root == self.here {
+            value.as_mut().expect("value from root must not be None!") as *mut T as *mut u8
+        } else {
+            broadcast_value.as_mut_ptr() as *mut u8
+        };
+
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.sender.send(NetworkOperation::Broadcast(
+            root,
+            bytes as *mut u8,
+            type_size,
+            tx,
+        )).unwrap();
+        rx.recv().unwrap();
+        if root == self.here {
+            value.unwrap()
+        } else {
+            unsafe { broadcast_value.assume_init() }
+        }
     }
 }
 
@@ -596,11 +718,12 @@ mod test {
             local_rank: Rank::new(0),
             world_size: 0,
             message_buffers: vec![FxHashMap::default()],
-            message_chan: rx,
-            for_single_sender: Some(tx),
+            op_receiver: rx,
+            op_sender: Some(tx),
             next_message_id: 0,
             sent_fragment_id: vec![0],
             ack_fragment_id: vec![AtomicUsize::new(0)],
+            barrier_event: None,
         }
     }
     fn set_ptr<T>(ctx: &mut CommunicationContext<T>) {

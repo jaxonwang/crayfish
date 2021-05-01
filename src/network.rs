@@ -10,9 +10,13 @@ pub trait MessageSender: Send + 'static {
 
 pub trait CollectiveOperator {
     fn barrier(&self);
+    fn barrier_notify(&mut self);
+    fn barrier_wait(&mut self);
+    fn barrier_try(&mut self) -> bool;
+    fn broadcast<T: Copy>(&self, root: Rank, value: Option<T>) -> T;
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Rank {
     rank: i32,
 }

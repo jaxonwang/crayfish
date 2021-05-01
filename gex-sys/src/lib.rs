@@ -250,8 +250,9 @@ pub fn gex_event_wait(event: gex_Event_t) {
     unsafe { gex_Event_Wait_Wrap(event) };
 }
 
-pub fn gex_event_occurs(event: gex_Event_t) -> bool {
-    !matches!(unsafe { gex_Event_Test_Wrap(event) }, 0)
+/// return true if event success
+pub fn gex_event_done(event: gex_Event_t) -> bool {
+    unsafe { gex_Event_Test_Wrap(event) == 0 }
 }
 
 pub fn gex_ep_query_bound_segment(tm: gex_TM_t, rank: gex_Rank_t) -> (*mut c_void, usize) {
@@ -487,6 +488,16 @@ pub fn gex_nbi_wait_am_lc() {
 
 pub fn gex_coll_barrier_nb(tm: gex_TM_t) -> gex_Event_t {
     unsafe { gex_Coll_BarrierNB_Wrap(tm, 0) }
+}
+
+pub unsafe fn gex_coll_broadcast_nb(
+    tm: gex_TM_t,
+    root: gex_Rank_t,
+    dst: *mut ::std::os::raw::c_void,
+    src: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+) -> gex_Event_t {
+    gex_Coll_BroadcastNB_Wrap(tm, root, dst, src, nbytes, 0)
 }
 
 pub unsafe fn gex_rma_putblocking(
