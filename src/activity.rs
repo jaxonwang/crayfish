@@ -21,8 +21,8 @@ use std::ops::DerefMut;
 
 extern crate serde;
 
-pub trait RemoteSend: Serialize + DeserializeOwned + Send + 'static {}
-impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send + 'static {}
+pub trait RemoteSend: Serialize + DeserializeOwned + Send {}
+impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send {}
 
 pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
