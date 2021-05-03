@@ -1,15 +1,14 @@
 use futures::FutureExt;
 use rust_apgas::activity::copy_panic_payload;
-use rust_apgas::activity::deserialize_entry_to_do_avoid_conflict;
-use rust_apgas::activity::serialize_packed_to_do_avoid_conflict;
+use rust_apgas::activity::init_helpers;
 use rust_apgas::activity::ActivityId;
 use rust_apgas::activity::FunctionLabel;
-use rust_apgas::activity::ProperDispatcher;
-use rust_apgas::activity::SquashOperation;
 use rust_apgas::activity::Squashable;
 use rust_apgas::activity::TaskItem;
 use rust_apgas::activity::TaskItemBuilder;
 use rust_apgas::activity::TaskItemExtracter;
+use rust_apgas::activity::HelperByType;
+use rust_apgas::activity::HelperMap;
 use rust_apgas::global_id;
 use rust_apgas::global_id::ActivityIdMethods;
 use rust_apgas::global_id::FinishIdMethods;
@@ -19,18 +18,19 @@ use rust_apgas::runtime::wait_all;
 use rust_apgas::runtime::wait_single;
 use rust_apgas::runtime::ApgasContext;
 use rust_apgas::runtime::ConcreteContext;
-use serde::Deserialize;
-use serde::Serialize;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::thread;
+use serde::Serialize;
+use serde::Deserialize;
+use std::any::TypeId;
 
 use rust_apgas::essence::genesis;
 
 extern crate futures;
 extern crate rust_apgas;
-extern crate serde;
 extern crate tokio;
+extern crate serde;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct A {
@@ -56,9 +56,6 @@ impl Squashable for A {
             out.last = out.last - x as usize;
             A { value: ret }
         })
-    }
-    fn arrange<L>(l: &mut [(Box<Self>, L)]) {
-        l.sort_by(|(a0, _), (a1, _)| a0.cmp(a1));
     }
 }
 
@@ -87,58 +84,11 @@ struct R {
     c: i32,
 }
 
-use rust_apgas::activity::SquashDispatch;
-use rust_apgas::activity::SquashedMapValue;
-use serde::de::MapAccess;
-use serde::ser::SerializeMap;
-use std::any::TypeId;
-#[derive(Serialize, Deserialize)]
-pub struct ConcreteDispatch {}
-impl ProperDispatcher for ConcreteDispatch {}
-impl<Op> SquashDispatch<Op> for ConcreteDispatch
-where
-    Op: SquashOperation,
-{
-    fn dispatch_for_squashable(typeid: TypeId, t: Op::DataType) -> Op::ReturnType {
-        if typeid == TypeId::of::<A>() {
-            Op::call::<A>(t)
-        } else if typeid == TypeId::of::<B>() {
-            Op::call::<B>(t)
-        } else {
-            panic!()
-        }
-    }
-    fn dispatch_serialize_entry<S>(
-        typeid: TypeId,
-        v: &SquashedMapValue,
-        ser: &mut S,
-    ) -> Result<(), S::Error>
-    where
-        S: SerializeMap,
-    {
-        if typeid == TypeId::of::<A>() {
-            serialize_packed_to_do_avoid_conflict::<A, S>(v, ser)
-        } else if typeid == TypeId::of::<B>() {
-            serialize_packed_to_do_avoid_conflict::<B, S>(v, ser)
-        } else {
-            panic!()
-        }
-    }
-    fn dispatch_deserialize_entry<'de, ACC>(
-        typeid: TypeId,
-        access: ACC,
-    ) -> Result<SquashedMapValue, ACC::Error>
-    where
-        ACC: MapAccess<'de>,
-    {
-        if typeid == TypeId::of::<A>() {
-            deserialize_entry_to_do_avoid_conflict::<A, ACC>(access)
-        } else if typeid == TypeId::of::<B>() {
-            deserialize_entry_to_do_avoid_conflict::<B, ACC>(access)
-        } else {
-            panic!()
-        }
-    }
+fn set_helpers() {
+    let mut helpers = HelperMap::default();
+    helpers.insert(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()));
+    helpers.insert(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()));
+    init_helpers(helpers);
 }
 
 async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
@@ -290,6 +240,6 @@ pub fn main() {
     genesis(
         finish(),
         real_fn_wrap_execute_from_remote,
-        ConcreteDispatch {},
+        set_helpers
     );
 }

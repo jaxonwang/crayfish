@@ -5,8 +5,6 @@ use rand::SeedableRng;
 use rust_apgas::activity::copy_panic_payload;
 use rust_apgas::activity::ActivityId;
 use rust_apgas::activity::FunctionLabel;
-use rust_apgas::activity::ProperDispatcher;
-use rust_apgas::activity::SquashOperation;
 use rust_apgas::activity::TaskItem;
 use rust_apgas::activity::TaskItemBuilder;
 use rust_apgas::activity::TaskItemExtracter;
@@ -22,8 +20,6 @@ use rust_apgas::runtime::wait_all;
 use rust_apgas::runtime::wait_single;
 use rust_apgas::runtime::ApgasContext;
 use rust_apgas::runtime::ConcreteContext;
-use serde::Deserialize;
-use serde::Serialize;
 use std::panic::AssertUnwindSafe;
 use std::thread;
 
@@ -32,42 +28,6 @@ extern crate rand;
 extern crate rust_apgas;
 extern crate serde;
 extern crate tokio;
-
-use rust_apgas::activity::SquashDispatch;
-use rust_apgas::activity::SquashedMapValue;
-use serde::de::MapAccess;
-use serde::ser::SerializeMap;
-use std::any::TypeId;
-#[derive(Serialize, Deserialize)]
-pub struct ConcreteDispatch {}
-impl ProperDispatcher for ConcreteDispatch {}
-impl<Op> SquashDispatch<Op> for ConcreteDispatch
-where
-    Op: SquashOperation,
-{
-    fn dispatch_for_squashable(_typeid: TypeId, _t: Op::DataType) -> Op::ReturnType {
-        panic!()
-    }
-    fn dispatch_serialize_entry<S>(
-        _typeid: TypeId,
-        _v: &SquashedMapValue,
-        _ser: &mut S,
-    ) -> Result<(), S::Error>
-    where
-        S: SerializeMap,
-    {
-        panic!()
-    }
-    fn dispatch_deserialize_entry<'de, ACC>(
-        _typeid: TypeId,
-        _access: ACC,
-    ) -> Result<SquashedMapValue, ACC::Error>
-    where
-        ACC: MapAccess<'de>,
-    {
-        panic!()
-    }
-}
 
 fn quick_sort<'a>(
     ctx: &'a mut impl ApgasContext,
@@ -216,6 +176,6 @@ pub fn main() -> Result<(), std::io::Error> {
     genesis(
         finish(),
         real_fn_wrap_execute_from_remote,
-        ConcreteDispatch {},
+        ||{}
     )
 }

@@ -195,7 +195,7 @@ impl dyn SquashedObject + Send {
 
     fn downcast_ref<T: Any>(&self) -> Option<&T> {
         // TODO remove that if if we are sure code we generated is correct
-        if dbg!((*self).type_id()) == dbg!(TypeId::of::<T>()) {
+        if (*self).type_id() == TypeId::of::<T>() {
             unsafe { Some(&*(self as *const dyn SquashedObject as *const T)) }
         } else {
             None
@@ -252,7 +252,7 @@ impl DerefMut for SquashedMapWrapper {
 
 type OrderedSquashable = Vec<(SoBox, OrderLabel)>;
 
-struct HelperByType<T: Squashable> {
+pub struct HelperByType<T: Squashable> {
     _mark: PhantomData<T>,
 }
 
@@ -282,7 +282,6 @@ where
 {
     fn serialize(&self, obj: &SBox) -> Vec<u8> {
         let mut ret = vec![];
-        let ha = SQUASH_HELPERS.lock().unwrap();
         serialize_into(
             &mut ret,
             &obj.downcast_ref::<SquashedHolder<T>>().unwrap().squashed,

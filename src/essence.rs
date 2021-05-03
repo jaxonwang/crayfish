@@ -18,7 +18,7 @@ use std::thread;
 
 extern crate tokio;
 
-pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD) -> MOUT
+pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD, set_helpers: impl FnOnce()) -> MOUT
 where
     F: Future<Output = MOUT> + Send + 'static,
     MOUT: Send + 'static,
@@ -27,6 +27,9 @@ where
 {
     // logger
     logging::setup_logger().unwrap();
+
+    // register dynamic operations for squahable
+    set_helpers();
 
     // prepare callback
     let msg_recv_callback =
