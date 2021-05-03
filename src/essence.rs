@@ -1,4 +1,3 @@
-use crate::activity::ProperDispatcher;
 use crate::activity::SquashBufferFactory;
 use crate::activity::TaskItem;
 use crate::global_id;
@@ -22,28 +21,26 @@ use std::thread;
 extern crate serde;
 extern crate tokio;
 
-// use a anonymous D to allow type inferrence
-pub fn genesis<D, F, MOUT, WD, WDF>(main: F, worker_dispatch: WD, _: D) -> MOUT
+pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD) -> MOUT
 where
     F: Future<Output = MOUT> + Send + 'static,
     MOUT: Send + 'static,
     WDF: Future<Output = ()> + Send + 'static,
     WD: Send + 'static + Fn(TaskItem) -> WDF,
-    D: ProperDispatcher + Serialize + DeserializeOwned,
 {
     // logger
     logging::setup_logger().unwrap();
 
     // prepare callback
     let msg_recv_callback =
-        |src: Rank, data: &[u8]| message_recv_callback::<SquashBufferFactory<D>>(src, data);
+        |src: Rank, data: &[u8]| message_recv_callback::<SquashBufferFactory>(src, data);
 
     // start network context
     let mut context = network::context::CommunicationContext::new(msg_recv_callback);
     let world_size = context.world_size();
 
     // prepare factories
-    let factory = Box::new(SquashBufferFactory::<D>::new());
+    let factory = Box::new(SquashBufferFactory::new());
 
     // init static data for communications
     init_worker_task_queue();
