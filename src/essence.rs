@@ -14,11 +14,8 @@ use crate::runtime::take_worker_task_receiver;
 use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
 use futures::Future;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::thread;
 
-extern crate serde;
 extern crate tokio;
 
 pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD) -> MOUT

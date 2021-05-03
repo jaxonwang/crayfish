@@ -2,6 +2,7 @@ pub use crate::global_id::ActivityId;
 use crate::place::Place;
 use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
+use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use serde::de::DeserializeOwned;
 use serde::de::MapAccess;
@@ -14,10 +15,12 @@ use serde::Serialize;
 use serde::Serializer;
 use std::any::Any;
 use std::any::TypeId;
+use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::sync::Mutex;
 
 extern crate serde;
 
@@ -78,10 +81,10 @@ pub trait Squashable: Any + Send + 'static + Ord {
         Self: Sized;
 }
 
-trait SquashableObject: Any + Send + 'static{
+pub trait SquashableObject: Any + Send + 'static {
     // for downcast
     fn fold(&self, v: &mut SBox);
-    fn default_squashed(&self) -> Box<dyn SquashedObject>;
+    fn default_squashed(&self) -> SBox;
 }
 
 impl<T> SquashableObject for T
@@ -91,7 +94,7 @@ where
     fn fold(&self, v: &mut SBox) {
         self.fold(&mut v.downcast_mut::<SquashedHolder<T>>().unwrap().squashed);
     }
-    fn default_squashed(&self) -> Box<dyn SquashedObject> {
+    fn default_squashed(&self) -> SBox {
         Box::new(SquashedHolder {
             squashed: T::Squashed::default(),
             _mark: PhantomData::<T>::default(),
@@ -99,27 +102,29 @@ where
     }
 }
 
-impl dyn SquashableObject + 'static {
+impl dyn SquashableObject + Send {
     fn downcast_ref<T: Any>(&self) -> Option<&T> {
         // TODO remove that if if we are sure code we generated is correct
-        if self.is::<T>() {
+        if (*self).type_id() == TypeId::of::<T>() {
             unsafe { Some(&*(self as *const dyn SquashableObject as *const T)) }
-        } else {
-            None
-        }
-    }
-
-    fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
-        // TODO remove that if if we are sure code we generated is correct
-        if self.type_id() == TypeId::of::<T>() {
-            unsafe { Some(&mut *(self as *mut dyn SquashableObject as *mut T)) }
         } else {
             None
         }
     }
 }
 
-impl fmt::Debug for dyn SquashableObject{
+fn downcast_squashable<T: Any>(b: SoBox) -> Result<Box<T>, SoBox> {
+    if (*b).type_id() == TypeId::of::<T>() {
+        unsafe {
+            let raw: *mut dyn SquashableObject = Box::into_raw(b);
+            Ok(Box::from_raw(raw as *mut T))
+        }
+    } else {
+        Err(b)
+    }
+}
+
+impl fmt::Debug for dyn SquashableObject + Send {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Squashable")
     }
@@ -130,24 +135,58 @@ struct SquashedHolder<T: Squashable> {
     _mark: PhantomData<T>,
 }
 
+impl<T> Deref for SquashedHolder<T>
+where
+    T: Squashable,
+{
+    type Target = T::Squashed;
+    fn deref(&self) -> &Self::Target {
+        &self.squashed
+    }
+}
+
+impl<T> DerefMut for SquashedHolder<T>
+where
+    T: Squashable,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.squashed
+    }
+}
+
+impl<T> SquashedHolder<T>
+where
+    T: Squashable,
+{
+    fn new(squashed: T::Squashed) -> Self {
+        SquashedHolder {
+            squashed,
+            _mark: PhantomData::<T>::default(),
+        }
+    }
+    fn new_boxed(squashed: T::Squashed) -> Box<Self> {
+        Box::new(Self::new(squashed))
+    }
+}
+
 // a magic to implment dyn T::Squashed where T is not allowed to be trait object
-trait SquashedObject: Send {
-    fn extract(&mut self) -> Option<Box<dyn SquashableObject>>;
+pub trait SquashedObject: Send + Any {
+    fn extract(&mut self) -> Option<SoBox>;
 }
 
 impl<T> SquashedObject for SquashedHolder<T>
 where
     T: Squashable,
 {
-    fn extract(&mut self) -> Option<Box<dyn SquashableObject>> {
-        T::extract(&mut self.squashed).map(|a| Box::new(a) as Box<dyn SquashableObject>)
+    fn extract(&mut self) -> Option<SoBox> {
+        T::extract(self).map(|a| Box::new(a) as SoBox)
     }
 }
 
-impl dyn SquashedObject {
+impl dyn SquashedObject + Send {
     fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
         // TODO remove that if if we are sure code we generated is correct
-        if self.type_id() == TypeId::of::<T>() {
+        if (*self).type_id() == TypeId::of::<T>() {
             unsafe { Some(&mut *(self as *mut dyn SquashedObject as *mut T)) }
         } else {
             None
@@ -156,7 +195,7 @@ impl dyn SquashedObject {
 
     fn downcast_ref<T: Any>(&self) -> Option<&T> {
         // TODO remove that if if we are sure code we generated is correct
-        if self.type_id() == TypeId::of::<T>() {
+        if dbg!((*self).type_id()) == dbg!(TypeId::of::<T>()) {
             unsafe { Some(&*(self as *const dyn SquashedObject as *const T)) }
         } else {
             None
@@ -164,7 +203,7 @@ impl dyn SquashedObject {
     }
 }
 
-impl fmt::Debug for dyn SquashedObject{
+impl fmt::Debug for dyn SquashedObject + Send {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Squashed")
     }
@@ -179,8 +218,8 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 // TODO: should impl serialize
 // TODO: arrange squash
 
-type SoBox = Box<dyn SquashableObject>;
-type SBox = Box<dyn SquashedObject>;
+type SoBox = Box<dyn SquashableObject + Send>;
+type SBox = Box<dyn SquashedObject + Send>;
 type SquashableMap = FxHashMap<TypeId, Vec<(SoBox, OrderLabel)>>;
 pub type SquashedMapValue = (SBox, Vec<OrderLabel>);
 type SquashedMap = FxHashMap<TypeId, SquashedMapValue>;
@@ -228,34 +267,96 @@ where
     }
 }
 
-impl<T> SerdeHelper for HelperByType<T>
+impl<T> Clone for HelperByType<T>
+where
+    T: Squashable,
+{
+    fn clone(&self) -> Self {
+        Default::default()
+    }
+}
+
+impl<T> SquashTypeHelper for HelperByType<T>
 where
     T: Squashable,
 {
     fn serialize(&self, obj: &SBox) -> Vec<u8> {
         let mut ret = vec![];
+        let ha = SQUASH_HELPERS.lock().unwrap();
         serialize_into(
             &mut ret,
             &obj.downcast_ref::<SquashedHolder<T>>().unwrap().squashed,
-        );
+        )
+        .unwrap();
         ret
     }
     fn deserialize(&self, bytes: Vec<u8>) -> SBox {
         // TODO use inplace deserialize to avoid copy
-        Box::new(SquashedHolder {
-            squashed: deserialize_from::<&[u8], T::Squashed>(&bytes[..]).unwrap(),
-            _mark: PhantomData::<T>::default(),
-        })
+        SquashedHolder::<T>::new_boxed(deserialize_from::<&[u8], T::Squashed>(&bytes[..]).unwrap())
+    }
+
+    fn sort_by(&self, to_arrange: &mut Vec<(SoBox, OrderLabel)>) {
+        to_arrange.sort_unstable_by(|a, b| {
+            a.0.downcast_ref::<T>()
+                .unwrap()
+                .cmp(b.0.downcast_ref::<T>().unwrap())
+        });
+    }
+    // TODO: I don't know why remove this send wound not compile, SquashTypeHeper is Send!
+    fn clone_boxed(&self) -> Box<dyn SquashTypeHelper + Send> {
+        Box::new(self.clone())
     }
 }
 
-trait SerdeHelper {
+pub trait SquashTypeHelper: Send {
     fn serialize(&self, obj: &SBox) -> Vec<u8>;
     fn deserialize(&self, bytes: Vec<u8>) -> SBox;
+    fn sort_by(&self, arrange: &mut Vec<(SoBox, OrderLabel)>);
+    fn clone_boxed(&self) -> Box<dyn SquashTypeHelper + Send>;
 }
 
-static SERDE_HELPERS: FxHashMap<TypeId, Box<dyn SerdeHelper>>;
+impl Clone for Box<dyn SquashTypeHelper + Send> {
+    fn clone(&self) -> Self {
+        self.clone_boxed()
+    }
+}
 
+impl fmt::Debug for Box<dyn SquashTypeHelper + Send> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad("type helper")
+    }
+}
+
+impl fmt::Debug for dyn SquashTypeHelper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad("SquashTypeHelper")
+    }
+}
+
+pub type HelperMap = FxHashMap<TypeId, Box<dyn SquashTypeHelper + Send>>;
+
+static SQUASH_HELPERS: Lazy<Mutex<HelperMap>> = Lazy::new(|| Mutex::new(HelperMap::default()));
+
+pub fn init_helpers(helpers: HelperMap) {
+    let mut h = SQUASH_HELPERS.lock().unwrap();
+    *h = helpers
+}
+
+thread_local! {
+    static LOCAL_SQUASH_HELPERS: Cell<Option<HelperMap>> = Cell::new(None);
+}
+
+fn get_squash_helper(typeid: TypeId) -> &'static dyn SquashTypeHelper {
+    LOCAL_SQUASH_HELPERS.with(|s| loop {
+        let maybe_ref: &Option<_> = unsafe { &*s.as_ptr() };
+        if let Some(s_ref) = maybe_ref.as_ref() {
+            break s_ref.get(&typeid).unwrap().as_ref();
+        } else {
+            let helpers = SQUASH_HELPERS.lock().unwrap().clone();
+            s.set(Some(helpers));
+        }
+    })
+}
 /*
 impl Serialize for SBox{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -368,7 +469,7 @@ impl Serialize for SquashedMapWrapper {
         let mut map = serializer.serialize_map(Some(self.len()))?;
         for (id, v) in self.iter() {
             map.serialize_key(&type_id_to_u64(*id)).unwrap();
-            let helper = SERDE_HELPERS.get(id).unwrap();
+            let helper = get_squash_helper(*id);
             let (squashed, ord) = v;
             let t = RefTuple {
                 first: helper.serialize(squashed),
@@ -403,7 +504,7 @@ impl<'de> Deserialize<'de> for SquashedMapWrapper {
                 while let Some(type_id) = access.next_key::<u64>()? {
                     let type_id = u64_to_type_id(type_id);
                     let (p, ord) = access.next_value::<(Vec<u8>, Vec<OrderLabel>)>()?;
-                    let helper = SERDE_HELPERS.get(&type_id).unwrap();
+                    let helper = get_squash_helper(type_id);
                     let squashed = helper.deserialize(p);
                     map.insert(type_id, (squashed, ord));
                 }
@@ -583,13 +684,13 @@ fn u64_to_type_id(data: u64) -> TypeId {
     unsafe { std::mem::transmute::<u64, TypeId>(data) }
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ReturnInfo {
     result: ActivityResult,
     sub_activities: Vec<ActivityId>,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StrippedTaskItem {
     fn_id: FunctionLabel,
     place: Place, // it's dst place, request place or return place
@@ -637,14 +738,7 @@ impl TaskItemExtracter {
         t
     }
     pub fn arg_squash<T: Squashable>(&mut self) -> T {
-        *self
-            .item
-            .squashable
-            .pop()
-            .unwrap()
-            .0
-            .downcast_ref::<T>()
-            .unwrap()
+        *downcast_squashable::<T>(self.item.squashable.pop().unwrap().0).unwrap()
     }
     pub fn ret<T: RemoteSend>(&mut self) -> Result<T, PanicPayload> {
         let ret_info = self.item.inner.ret.take().unwrap();
@@ -773,14 +867,15 @@ fn squash_one_type(
     squashed_map: &mut SquashedMap,
 ) {
     let to_squash = squashable_map.remove(&typeid).unwrap();
-    let squashed_with_order = squash(to_squash);
+    let squashed_with_order = squash(typeid, to_squash);
     squashed_map.insert(typeid, squashed_with_order);
 }
 
-fn squash(to_squash: Vec<(SoBox, OrderLabel)>) -> (SBox, Vec<OrderLabel>) {
+fn squash(typeid: TypeId, to_squash: Vec<(SoBox, OrderLabel)>) -> (SBox, Vec<OrderLabel>) {
     let mut to_squash = to_squash;
-    to_squash.sort_by_key(|(a, b)| a);
-    debug_assert!(to_squash.is_empty());
+    let helper = get_squash_helper(typeid);
+    helper.sort_by(&mut to_squash);
+    debug_assert!(!to_squash.is_empty());
     let mut squashed = to_squash[0].0.default_squashed();
     let mut labels = Vec::<_>::with_capacity(to_squash.len());
     for (s, order) in to_squash {
@@ -799,10 +894,7 @@ fn extract_one_type(
     extract_into(to_inflate, ordered_squashable);
 }
 
-fn extract_into(
-    to_inflate: (SBox, Vec<OrderLabel>),
-    to: &mut Vec<(SoBox, OrderLabel)>,
-) {
+fn extract_into(to_inflate: (SBox, Vec<OrderLabel>), to: &mut Vec<(SoBox, OrderLabel)>) {
     let (mut squashed, labels) = to_inflate;
     let mut count = 0;
     while let Some(s) = squashed.extract() {
@@ -818,31 +910,26 @@ pub mod test {
     use rand::prelude::*;
     use rand::seq::SliceRandom;
     use std::convert::TryInto;
+    use std::sync::MutexGuard;
 
-    pub fn _clone<T: Send + Clone + 'static>(this: &TaskItem) -> TaskItem {
-        let cbox = |v: &(PackedValue, OrderLabel)| {
+    fn clone_squashable_orderlabel_list<T: Squashable + Clone>(
+        v: &[(SoBox, OrderLabel)],
+    ) -> Vec<(SoBox, OrderLabel)> {
+        let cbox = |v: &(SoBox, OrderLabel)| {
             let (a, b) = v;
-            (
-                Box::new(a.downcast_ref::<T>().unwrap().clone()) as PackedValue,
-                *b,
-            )
+            let a: T = (*a.downcast_ref::<T>().unwrap()).clone();
+            (Box::new(a) as SoBox, *b)
         };
+        v.iter().map(cbox).collect()
+    }
+
+    pub fn _clone<T: Squashable + Clone>(this: &TaskItem) -> TaskItem {
         TaskItem {
-            inner: StrippedTaskItem {
-                fn_id: this.inner.fn_id,
-                place: this.inner.place,
-                waited: false,
-                activity_id: this.inner.activity_id,
-                ret: this.inner.ret.as_ref().map(|retinfo| ReturnInfo {
-                    result: retinfo.result.clone(),
-                    sub_activities: retinfo.sub_activities.clone(),
-                }),
-                args: this.inner.args.clone(),
-            },
-            squashable: this.squashable.iter().map(cbox).collect(),
+            inner: this.inner.clone(),
+            squashable: clone_squashable_orderlabel_list::<T>(&this.squashable[..]),
         }
     }
-    pub fn _eq<T: Send + PartialEq + 'static>(t: &TaskItem, i: &TaskItem) -> bool {
+    pub fn _eq<T: Squashable>(t: &TaskItem, i: &TaskItem) -> bool {
         let mut ret = t.inner == i.inner && t.squashable.len() == i.squashable.len();
         for index in 0..t.squashable.len() {
             ret = ret && t.squashable[index].1 == i.squashable[index].1;
@@ -860,20 +947,23 @@ pub mod test {
         use super::*;
         impl Clone for TaskItem {
             fn clone(&self) -> Self {
-                _clone::<usize>(self)
+                TaskItem {
+                    inner: self.inner.clone(),
+                    squashable: vec![],
+                }
             }
         }
         impl Eq for TaskItem {}
         impl PartialEq for TaskItem {
             fn eq(&self, i: &Self) -> bool {
-                _eq::<usize>(self, i)
+                self.inner == i.inner
             }
         }
     }
     use rand::distributions::Alphanumeric;
     #[test]
     pub fn test_squashbuffer_push_pop() {
-        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
+        let mut buf = SquashBuffer::new();
         let mut rng = thread_rng();
         let mut items: Vec<TaskItem> = vec![];
         for _ in 0..50 {
@@ -907,55 +997,6 @@ pub mod test {
         }
     }
 
-    #[derive(Serialize, Deserialize)]
-    pub struct ConcreteDispatch {}
-    impl ProperDispatcher for ConcreteDispatch {}
-    impl<Op> SquashDispatch<Op> for ConcreteDispatch
-    where
-        Op: SquashOperation,
-    {
-        fn dispatch_for_squashable(typeid: TypeId, t: Op::DataType) -> Op::ReturnType {
-            if typeid == TypeId::of::<A>() {
-                Op::call::<A>(t)
-            } else if typeid == TypeId::of::<B>() {
-                Op::call::<B>(t)
-            } else {
-                panic!()
-            }
-        }
-        fn dispatch_serialize_entry<S>(
-            typeid: TypeId,
-            v: &SquashedMapValue,
-            ser: &mut S,
-        ) -> Result<(), S::Error>
-        where
-            S: SerializeMap,
-        {
-            if typeid == TypeId::of::<A>() {
-                serialize_packed_to_do_avoid_conflict::<A, S>(v, ser)
-            } else if typeid == TypeId::of::<B>() {
-                serialize_packed_to_do_avoid_conflict::<B, S>(v, ser)
-            } else {
-                panic!()
-            }
-        }
-        fn dispatch_deserialize_entry<'de, ACC>(
-            typeid: TypeId,
-            access: ACC,
-        ) -> Result<SquashedMapValue, ACC::Error>
-        where
-            ACC: MapAccess<'de>,
-        {
-            if typeid == TypeId::of::<A>() {
-                deserialize_entry_to_do_avoid_conflict::<A, ACC>(access)
-            } else if typeid == TypeId::of::<B>() {
-                deserialize_entry_to_do_avoid_conflict::<B, ACC>(access)
-            } else {
-                panic!()
-            }
-        }
-    }
-
     #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
     pub struct A {
         pub value: usize,
@@ -980,9 +1021,6 @@ pub mod test {
                 out.last = out.last - x as usize;
                 A { value: ret }
             })
-        }
-        fn arrange<L>(l: &mut [(Box<Self>, L)]) {
-            l.sort_by(|(a0, _), (a1, _)| a0.cmp(a1));
         }
     }
 
@@ -1011,8 +1049,32 @@ pub mod test {
         c: i32,
     }
 
+    static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+
+    fn set_helpers_for_a_b() {
+        let mut helpers = HelperMap::default();
+        helpers.insert(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()));
+        helpers.insert(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()));
+        init_helpers(helpers);
+    }
+    pub struct TestGuardForStatic<'a> {
+        _guard: MutexGuard<'a, bool>,
+    }
+
+    impl<'a> TestGuardForStatic<'a> {
+        pub fn new() -> Self {
+            let ret = TestGuardForStatic {
+                // must get test lock first
+                _guard: TEST_LOCK.lock().unwrap(),
+            };
+            set_helpers_for_a_b();
+            ret
+        }
+    }
+
     #[test]
     pub fn test_squash_extract() {
+        let _ = TestGuardForStatic::new();
         let mut rng = thread_rng();
 
         let mut a_list: Vec<_> = (1..65).map(|value| Box::new(A { value })).collect();
@@ -1023,13 +1085,18 @@ pub mod test {
             .zip(0..a_len)
             .map(|(a, b)| (a, b as OrderLabel))
             .collect(); // assign order
-        Squashable::arrange(&mut a_list[..]);
-        let squashed = squash::<A>(a_list.clone());
+
+        let a_list_clone = a_list
+            .clone()
+            .into_iter()
+            .map(|(a, b)| (a as SoBox, b))
+            .collect();
+        let squashed = squash(TypeId::of::<A>(), a_list_clone);
         let mut extracted = vec![];
-        extract_into::<A>(squashed, &mut extracted);
+        extract_into(squashed, &mut extracted);
         let mut extracted: Vec<_> = extracted
             .into_iter()
-            .map(|(a, b)| (a.downcast::<A>().unwrap(), b))
+            .map(|(a, b)| (downcast_squashable::<A>(a).unwrap(), b))
             .collect();
         // there is no order in extract into, so sort here for compare
         extracted.sort_by_key(|(_, b)| *b);
@@ -1040,10 +1107,15 @@ pub mod test {
             .map(|value| (Box::new(B { value }), value as OrderLabel))
             .collect();
         let mut extracted = vec![];
-        extract_into::<B>(squash(b_list.clone()), &mut extracted);
+        let b_list_clone = b_list
+            .clone()
+            .into_iter()
+            .map(|(a, b)| (a as SoBox, b))
+            .collect();
+        extract_into(squash(TypeId::of::<B>(), b_list_clone), &mut extracted);
         let mut extracted: Vec<_> = extracted
             .into_iter()
-            .map(|(b, l)| (b.downcast::<B>().unwrap(), l))
+            .map(|(b, l)| (downcast_squashable::<B>(b).unwrap(), l))
             .collect();
         extracted.sort_by_key(|(_, b)| *b);
         assert_eq!(b_list, extracted);
@@ -1071,6 +1143,7 @@ pub mod test {
 
     #[test]
     pub fn test_squash_extract_all() {
+        let _ = TestGuardForStatic::new();
         let mut rng = thread_rng();
         // prepare a
         let mut a_list: Vec<_> = (1..65).map(|value| A { value }).collect();
@@ -1088,7 +1161,7 @@ pub mod test {
             .cloned()
             .map(|(a, b, f)| crate_squash_item(a, b, f))
             .collect();
-        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
+        let mut buf = SquashBuffer::new();
         for i in items {
             buf.push(i)
         }
@@ -1109,6 +1182,7 @@ pub mod test {
 
     #[test]
     pub fn test_squash_extract_serialize_desrialize_all() {
+        let _ = TestGuardForStatic::new();
         let mut rng = thread_rng();
         // prepare a
         let mut a_list: Vec<_> = (1..65).map(|value| A { value }).collect();
@@ -1126,7 +1200,7 @@ pub mod test {
             .cloned()
             .map(|(a, b, f)| crate_squash_item(a, b, f))
             .collect();
-        let mut buf = SquashBuffer::<ConcreteDispatch>::new();
+        let mut buf = SquashBuffer::new();
         for i in items {
             buf.push(i)
         }
@@ -1134,7 +1208,7 @@ pub mod test {
         // serialize
         let mut bytes = vec![0u8; 0];
         serialize_into(&mut bytes, &buf).unwrap();
-        let mut buf: SquashBuffer<ConcreteDispatch> = deserialize_from(&bytes[..]).unwrap();
+        let mut buf: SquashBuffer = deserialize_from(&bytes[..]).unwrap();
         // after deserialize
         buf.extract_all();
 
@@ -1245,14 +1319,15 @@ pub mod test {
 
     #[test]
     pub fn test_serialzie_squashed_map() {
-        let mut map = SquashedMapWrapper::<ConcreteDispatch>::default();
+        let _ = TestGuardForStatic::new();
+        let mut map = SquashedMapWrapper::default();
 
         // aout squash
         let aout = AOut {
             last: 12345,
             diffs: (0..199).collect(),
         };
-        let packed_a = Box::new(aout.clone()) as PackedValue;
+        let packed_a = SquashedHolder::<A>::new_boxed(aout.clone()) as SBox;
         let ord_a = (0..100).collect::<Vec<OrderLabel>>();
         let a_type_id = TypeId::of::<A>();
         map.insert(a_type_id, (packed_a, ord_a.clone()));
@@ -1261,7 +1336,7 @@ pub mod test {
         let bout = BOut {
             list: (0..199u8).rev().collect(),
         };
-        let packed_b = Box::new(bout.clone()) as PackedValue;
+        let packed_b = SquashedHolder::<B>::new_boxed(bout.clone()) as SBox;
         let ord_b = (0..100).rev().collect::<Vec<OrderLabel>>();
         let b_type_id = TypeId::of::<B>();
         map.insert(b_type_id, (packed_b, ord_b.clone()));
@@ -1269,14 +1344,15 @@ pub mod test {
         // serial & deserial
         let mut bytes = vec![0u8; 0];
         serialize_into(&mut bytes, &map).unwrap();
-        let mut map1: SquashedMapWrapper<ConcreteDispatch> = deserialize_from(&bytes[..]).unwrap();
+        let mut map1: SquashedMapWrapper = deserialize_from(&bytes[..]).unwrap();
 
         // check aout
         let (packed_a1, ord_a1) = map1.remove(&a_type_id).unwrap();
         assert_eq!(
-            *packed_a1
-                .downcast_ref::<<A as Squashable>::Squashed>()
-                .unwrap(),
+            packed_a1
+                .downcast_ref::<SquashedHolder<A>>()
+                .unwrap()
+                .squashed,
             aout
         );
         assert_eq!(ord_a1, ord_a);
@@ -1284,9 +1360,10 @@ pub mod test {
         // check bout
         let (packed_b1, ord_b1) = map1.remove(&b_type_id).unwrap();
         assert_eq!(
-            *packed_b1
-                .downcast_ref::<<B as Squashable>::Squashed>()
-                .unwrap(),
+            packed_b1
+                .downcast_ref::<SquashedHolder<B>>()
+                .unwrap()
+                .squashed,
             bout
         );
         assert_eq!(ord_b1, ord_b);
@@ -1294,7 +1371,7 @@ pub mod test {
 
     #[test]
     pub fn test_buffer_factory() {
-        let f = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let f = Box::new(SquashBufferFactory::new());
         let f = f as Box<dyn AbstractSquashBufferFactory>;
         let buffer = f.new_buffer();
         assert_eq!(buffer.len(), 0);

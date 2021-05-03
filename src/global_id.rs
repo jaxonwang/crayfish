@@ -147,7 +147,7 @@ pub mod test {
     const TEST_HERE: Place = 7;
     static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
-    pub fn global_id_reset_everything() {
+    fn global_id_reset_everything() {
         match HERE_STATIC.set(TEST_HERE) {
             // only set once
             _ => (),

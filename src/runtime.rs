@@ -151,7 +151,7 @@ fn get_wait_request_sender_ref() -> &'static Sender<Box<WaitRequest>> {
     })
 }
 
-pub trait ApgasContext : Send{
+pub trait ApgasContext: Send {
     fn inherit(finish_id: FinishId) -> Self;
     fn new_frame() -> Self;
     fn spawned(self) -> Vec<ActivityId>;
@@ -554,21 +554,24 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::activity::test::TestGuardForStatic as ATestGuard;
     use crate::activity::test::A;
-    use crate::global_id::test::TestGuardForStatic;
+    use crate::global_id::test::TestGuardForStatic as GTestGuard;
     use crate::global_id::*;
     use futures::executor;
     use std::thread;
     use std::time; // TODO: write test utilities
 
     struct RuntimeTestGuard<'a> {
-        _guard: TestGuardForStatic<'a>,
+        _guard_a: ATestGuard<'a>,
+        _guard_g: GTestGuard<'a>,
     }
 
     impl<'a> RuntimeTestGuard<'a> {
         fn new() -> Self {
             let ret = RuntimeTestGuard {
-                _guard: TestGuardForStatic::new(),
+                _guard_a: ATestGuard::new(),
+                _guard_g: GTestGuard::new(),
             };
             init_worker_task_queue();
             init_task_item_channels();
@@ -646,10 +649,8 @@ mod test {
                 join_handle,
             }
         }
-    }
 
-    impl<'a> ExecutorHubSetUp<'a> {
-        fn default() -> Self {
+        fn new_with_fake() -> Self {
             let _test_guard = RuntimeTestGuard::new();
             let mut hub = ExecutionHub::new(FakeDistributor {});
             let trigger = hub.get_trigger();
@@ -730,7 +731,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_send_after_wait() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let here = global_id::here();
@@ -753,7 +754,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_send_many_wait() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let mut wait_these = vec![];
@@ -784,7 +785,7 @@ mod test {
 
     #[test]
     fn test_single_wait_local_should_panic() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         std::panic::set_hook(Box::new(|_| {})); // silence backtrace
@@ -829,7 +830,7 @@ mod test {
 
     #[test]
     fn test_many_local() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
         // new context
         let mut ctx = ConcreteContext::new_frame();
         let mut activities: Vec<(ActivityId, Vec<ActivityId>)> = vec![];
@@ -851,7 +852,7 @@ mod test {
 
     #[test]
     fn test_local_worker_task_queue() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
         let mut worker_receiver = take_worker_task_receiver();
         let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
         builder.arg(1usize);
@@ -868,7 +869,6 @@ mod test {
         assert_eq!(e.arg_squash::<A>(), A { value: 123 });
     }
 
-    use crate::activity::test::ConcreteDispatch;
     use crate::activity::test::_clone;
     use crate::activity::test::_eq;
     use crate::activity::FunctionLabel;
@@ -893,13 +893,13 @@ mod test {
 
     #[test]
     fn test_distributor() {
-        let _e = ExecutorHubSetUp::default();
+        let _e = ExecutorHubSetUp::new_with_fake();
 
         let (bytes_t, bytes_r) = mpsc::channel::<Vec<u8>>();
         let (buf_t, buf_r) = mpsc::channel::<Box<dyn AbstractSquashBuffer>>();
 
-        let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
-        let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let factory = Box::new(SquashBufferFactory::new());
+        let factory1 = Box::new(SquashBufferFactory::new());
         let distrbutor = Distributor::new(factory, 10, MockSender { sender: bytes_t }, buf_r);
 
         let t = thread::spawn(move || {
@@ -956,8 +956,8 @@ mod test {
         let (bytes_t, bytes_r) = mpsc::channel::<Vec<u8>>();
         let (buf_t, buf_r) = mpsc::channel::<Box<dyn AbstractSquashBuffer>>();
 
-        let factory = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
-        let factory1 = Box::new(SquashBufferFactory::<ConcreteDispatch>::new());
+        let factory = Box::new(SquashBufferFactory::new());
+        let factory1 = Box::new(SquashBufferFactory::new());
         let distrbutor = Distributor::new(factory, 10, MockSender { sender: bytes_t }, buf_r);
 
         let dst_place: Place = 1;
