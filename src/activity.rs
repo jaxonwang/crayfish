@@ -113,7 +113,7 @@ impl dyn SquashableObject + Send {
     }
 }
 
-fn downcast_squashable<T: Any>(b: SoBox) -> Result<Box<T>, SoBox> {
+pub(crate) fn downcast_squashable<T: Any>(b: SoBox) -> Result<Box<T>, SoBox> {
     if (*b).type_id() == TypeId::of::<T>() {
         unsafe {
             let raw: *mut dyn SquashableObject = Box::into_raw(b);

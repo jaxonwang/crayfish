@@ -9,5 +9,6 @@ pub mod place;
 pub mod runtime;
 mod serialization;
 pub mod essence;
+pub mod runtime_meta;
 
 mod prelude {}
