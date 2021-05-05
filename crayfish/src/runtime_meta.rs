@@ -125,7 +125,6 @@ mod test {
     use crate::activity::test::A;
     use crate::activity::test::B;
 
-
     // WARN: only one test case will touch the static data
     fn clean_and_set_meta_info() {
         *STATIC_META_TABLE.lock().unwrap() = TypeMetaInfoTable::default();
@@ -135,8 +134,7 @@ mod test {
 
     use crate::activity::downcast_squashable;
 
-    fn test_cast_of<T:Squashable + std::fmt::Debug + Clone>(list: Vec<Box<T>>){
-
+    fn test_cast_of<T: Squashable + std::fmt::Debug + Clone>(list: Vec<Box<T>>) {
         let mut a_obj_list = vec![];
         for a in list.iter().cloned() {
             let result = try_cast_squashable_object(*a);
@@ -155,7 +153,8 @@ mod test {
             inflated.push(a)
         }
         let inflated: Vec<_> = inflated
-            .into_iter().rev()
+            .into_iter()
+            .rev()
             .map(|a| downcast_squashable::<T>(a).unwrap())
             .collect();
         assert_eq!(inflated, list);
@@ -173,6 +172,5 @@ mod test {
 
         let b_list: Vec<_> = (0..128).map(|i| Box::new(B { value: i })).collect();
         test_cast_of(b_list);
-
     }
 }

@@ -1,11 +1,11 @@
-use rust_apgas::logging;
-use rust_apgas::logging::*;
-use rust_apgas::network;
-use rust_apgas::network::CollectiveOperator;
-use rust_apgas::network::MessageSender;
-use rust_apgas::network::Rank;
+use crayfish::logging;
+use crayfish::logging::*;
+use crayfish::network;
+use crayfish::network::CollectiveOperator;
+use crayfish::network::MessageSender;
+use crayfish::network::Rank;
 
-extern crate rust_apgas;
+extern crate crayfish;
 
 fn print_hostname() {
     use std::process::Command;

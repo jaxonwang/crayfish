@@ -5,6 +5,7 @@ authors = ["JX Wang <jxwang92@gmail.com>"]
 edition = "2018"
 description = "Binding to GASNet-EX"
 build = "build.rs"
+license = "BSD-3-Clause"
 
 [dependencies]
 

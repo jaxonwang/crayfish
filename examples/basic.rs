@@ -1,36 +1,35 @@
+use crayfish::activity::copy_panic_payload;
+use crayfish::activity::init_helpers;
+use crayfish::activity::ActivityId;
+use crayfish::activity::FunctionLabel;
+use crayfish::activity::HelperByType;
+use crayfish::activity::HelperMap;
+use crayfish::activity::Squashable;
+use crayfish::activity::TaskItem;
+use crayfish::activity::TaskItemBuilder;
+use crayfish::activity::TaskItemExtracter;
+use crayfish::essence::genesis;
+use crayfish::global_id;
+use crayfish::global_id::ActivityIdMethods;
+use crayfish::global_id::FinishIdMethods;
+use crayfish::logging::*;
+use crayfish::place::Place;
+use crayfish::runtime::wait_all;
+use crayfish::runtime::wait_single;
+use crayfish::runtime::ApgasContext;
+use crayfish::runtime::ConcreteContext;
 use futures::FutureExt;
-use rust_apgas::activity::copy_panic_payload;
-use rust_apgas::activity::init_helpers;
-use rust_apgas::activity::ActivityId;
-use rust_apgas::activity::FunctionLabel;
-use rust_apgas::activity::Squashable;
-use rust_apgas::activity::TaskItem;
-use rust_apgas::activity::TaskItemBuilder;
-use rust_apgas::activity::TaskItemExtracter;
-use rust_apgas::activity::HelperByType;
-use rust_apgas::activity::HelperMap;
-use rust_apgas::global_id;
-use rust_apgas::global_id::ActivityIdMethods;
-use rust_apgas::global_id::FinishIdMethods;
-use rust_apgas::logging::*;
-use rust_apgas::place::Place;
-use rust_apgas::runtime::wait_all;
-use rust_apgas::runtime::wait_single;
-use rust_apgas::runtime::ApgasContext;
-use rust_apgas::runtime::ConcreteContext;
+use serde::Deserialize;
+use serde::Serialize;
+use std::any::TypeId;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::thread;
-use serde::Serialize;
-use serde::Deserialize;
-use std::any::TypeId;
 
-use rust_apgas::essence::genesis;
-
+extern crate crayfish;
 extern crate futures;
-extern crate rust_apgas;
-extern crate tokio;
 extern crate serde;
+extern crate tokio;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct A {
@@ -237,9 +236,5 @@ async fn finish() {
 }
 
 pub fn main() {
-    genesis(
-        finish(),
-        real_fn_wrap_execute_from_remote,
-        set_helpers
-    );
+    genesis(finish(), real_fn_wrap_execute_from_remote, set_helpers);
 }
