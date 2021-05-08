@@ -1,5 +1,4 @@
 
-#![feature(trace_macros)]
 pub mod activity; // TODO private
 mod finish;
 mod gasnet;
@@ -13,5 +12,11 @@ mod serialization;
 pub mod essence;
 pub mod runtime_meta;
 pub mod args;
+mod executor;
 
-mod prelude {}
+mod prelude {
+    pub use crate::executor::spawn;
+    pub use crate::executor::runtime;
+}
+
+pub use crate::prelude::*;

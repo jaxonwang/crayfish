@@ -5,7 +5,6 @@ use crate::serialization::serialize_into;
 use crate::args::RemoteSend;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
-use serde::de::DeserializeOwned;
 use serde::de::MapAccess;
 use serde::de::Visitor;
 use serde::ser::SerializeMap;
@@ -24,9 +23,6 @@ use std::ops::DerefMut;
 use std::sync::Mutex;
 
 extern crate serde;
-
-pub trait NameToRemove: Serialize + DeserializeOwned + Send {}
-impl<T> NameToRemove for T where T: Serialize + DeserializeOwned + Send {}
 
 pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
@@ -275,7 +271,7 @@ where
         to_arrange.sort_unstable_by(|a, b| {
             a.0.downcast_ref::<T>()
                 .unwrap()
-                .cmp(b.0.downcast_ref::<T>().unwrap())
+                .reorder(b.0.downcast_ref::<T>().unwrap())
         });
     }
     // TODO: I don't know why remove this send wound not compile, SquashTypeHeper is Send!
@@ -619,27 +615,21 @@ impl TaskItemExtracter {
         item.squashable.reverse(); // to have the same order as arg, reverse since pop from behind
         TaskItemExtracter { position: 0, item }
     }
-    pub fn arg<T: NameToRemove>(&mut self) -> T {
-        let mut read = &self.item.inner.args[self.position..];
-        let t = deserialize_from(&mut read).expect("Failed to deserialize function argument");
-        self.position =
-            unsafe { read.as_ptr().offset_from(self.item.inner.args.as_ptr()) as usize };
-        t
-    }
-    pub fn arg_squash<T: RemoteSend>(&mut self) -> T {
-        *downcast_squashable::<T>(self.item.squashable.pop().unwrap().0).unwrap()
-    }
-    pub fn ret<T: NameToRemove>(&mut self) -> Result<T, PanicPayload> {
-        let ret_info = self.item.inner.ret.take().unwrap();
-        match ret_info.result {
-            Ok(()) => Ok(self.arg()),
-            Err(e) => Err(e),
+    pub fn arg<T: RemoteSend>(&mut self) -> T {
+        if T::is_squashable() {
+            *downcast_squashable::<T>(self.item.squashable.pop().unwrap().0).unwrap()
+        }else{
+            let mut read = &self.item.inner.args[self.position..];
+            let t = deserialize_from(&mut read).expect("Failed to deserialize function argument");
+            self.position =
+                unsafe { read.as_ptr().offset_from(self.item.inner.args.as_ptr()) as usize };
+            t
         }
     }
-    pub fn ret_squash<T: RemoteSend>(&mut self) -> Result<T, PanicPayload> {
+    pub fn ret<T: RemoteSend>(&mut self) -> Result<T, PanicPayload> {
         let ret_info = self.item.inner.ret.take().unwrap();
         match ret_info.result {
-            Ok(()) => Ok(self.arg_squash()),
+            Ok(()) => Ok(self.arg::<T>()),
             Err(e) => Err(e),
         }
     }
@@ -694,14 +684,15 @@ impl TaskItemBuilder {
         self.item.inner.waited = true;
     }
 
-    pub fn arg(&mut self, t: impl NameToRemove) {
-        serialize_into(&mut self.item.inner.args, &t)
-            .expect("Failed to serialize function argument");
-        self.next_label();
-    }
-    pub fn arg_squash(&mut self, t: impl RemoteSend) {
-        let label = self.next_label();
-        self.item.squashable.push((Box::new(t), label));
+    pub fn arg<T:RemoteSend>(&mut self, t: T) {
+        if T::is_squashable(){
+            let label = self.next_label();
+            self.item.squashable.push((Box::new(t), label));
+        }else{
+            serialize_into(&mut self.item.inner.args, &t)
+                .expect("Failed to serialize function argument");
+            self.next_label();
+        }
     }
     pub fn build(self) -> TaskItem {
         self.item
@@ -716,20 +707,10 @@ impl TaskItemBuilder {
             sub_activities: vec![],
         });
     }
-    pub fn ret(&mut self, result: std::thread::Result<impl NameToRemove>) {
+    pub fn ret<T:RemoteSend>(&mut self, result: std::thread::Result<T>) {
         let result = match result {
             Ok(ret) => {
-                self.arg(ret);
-                Ok(())
-            }
-            Err(payload) => Err(cast_panic_payload(payload)),
-        };
-        self.set_result(result);
-    }
-    pub fn ret_squash(&mut self, result: std::thread::Result<impl RemoteSend>) {
-        let result = match result {
-            Ok(ret) => {
-                self.arg_squash(ret);
+                self.arg::<T>(ret);
                 Ok(())
             }
             Err(payload) => Err(cast_panic_payload(payload)),
@@ -800,6 +781,7 @@ pub mod test {
     use rand::seq::SliceRandom;
     use std::convert::TryInto;
     use std::sync::MutexGuard;
+    use std::cmp::Ordering;
 
     fn clone_squashable_orderlabel_list<T: RemoteSend + Clone>(
         v: &[(SoBox, OrderLabel)],
@@ -818,7 +800,7 @@ pub mod test {
             squashable: clone_squashable_orderlabel_list::<T>(&this.squashable[..]),
         }
     }
-    pub fn _eq<T: RemoteSend>(t: &TaskItem, i: &TaskItem) -> bool {
+    pub fn _eq<T: RemoteSend + PartialEq>(t: &TaskItem, i: &TaskItem) -> bool {
         let mut ret = t.inner == i.inner && t.squashable.len() == i.squashable.len();
         for index in 0..t.squashable.len() {
             ret = ret && t.squashable[index].1 == i.squashable[index].1;
@@ -911,6 +893,9 @@ pub mod test {
                 A { value: ret }
             })
         }
+        fn reorder(&self, other: &Self) -> Ordering{
+            self.cmp(other)
+        }
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
@@ -928,6 +913,9 @@ pub mod test {
         }
         fn extract(out: &mut Self::Output) -> Option<Self> {
             out.list.pop().map(|value| B { value })
+        }
+        fn reorder(&self, other: &Self) -> Ordering{
+            self.cmp(other)
         }
     }
 
@@ -1013,19 +1001,19 @@ pub mod test {
     fn crate_squash_item(a: A, b: B, fn_id: FunctionLabel) -> TaskItem {
         let mut rng = thread_rng();
         let mut builder = TaskItemBuilder::new(fn_id, rng.gen(), rng.gen());
-        builder.arg_squash(a.clone());
-        builder.arg_squash(b.clone());
-        builder.arg_squash(a);
-        builder.arg_squash(b);
+        builder.arg(a.clone());
+        builder.arg(b.clone());
+        builder.arg(a);
+        builder.arg(b);
         builder.build()
     }
     fn extract_squash_item(item: TaskItem) -> (A, B, FunctionLabel) {
         assert_eq!(item.squashable.len(), 4);
         let mut e = TaskItemExtracter::new(item);
-        let _: A = e.arg_squash();
-        let _: B = e.arg_squash();
-        let a: A = e.arg_squash();
-        let b: B = e.arg_squash();
+        let _: A = e.arg();
+        let _: B = e.arg();
+        let a: A = e.arg();
+        let b: B = e.arg();
         let fn_id = e.fn_id();
         (a, b, fn_id)
     }
@@ -1125,9 +1113,9 @@ pub mod test {
         let d = B { value: 56 };
         let mut builder = TaskItemBuilder::new(fn_id, place, activity_id);
         builder.arg(a);
-        builder.arg_squash(b.clone());
+        builder.arg(b.clone());
         builder.arg(c);
-        builder.arg_squash(d.clone());
+        builder.arg(d.clone());
         let item = builder.build();
         assert_eq!(item.inner.fn_id, fn_id);
         assert_eq!(item.inner.place, place);
@@ -1136,9 +1124,9 @@ pub mod test {
         assert_eq!(item.squashable[1].1, 3);
         let mut ex = TaskItemExtracter::new(item);
         assert_eq!(a, ex.arg());
-        assert_eq!(b, ex.arg_squash());
+        assert_eq!(b, ex.arg());
         assert_eq!(c, ex.arg());
-        assert_eq!(d, ex.arg_squash());
+        assert_eq!(d, ex.arg());
         assert_eq!(ex.fn_id(), fn_id);
         assert_eq!(ex.place(), place);
         assert_eq!(ex.activity_id(), activity_id);
@@ -1156,11 +1144,11 @@ pub mod test {
         // ret squash ok
         let result = Ok(A { value: 4577 });
         let mut builder = TaskItemBuilder::new(fn_id, place, activity_id);
-        builder.ret_squash(result);
+        builder.ret(result);
         builder.sub_activities(activities.clone());
         let mut ex = TaskItemExtracter::new(builder.build());
         assert_eq!(ex.sub_activities(), activities);
-        assert_eq!(ex.ret_squash::<A>().unwrap(), A { value: 4577 });
+        assert_eq!(ex.ret::<A>().unwrap(), A { value: 4577 });
 
         // ret Err
         let msg = String::from("123125435");
@@ -1176,9 +1164,9 @@ pub mod test {
         let result = Box::new(msg.clone()) as Box<dyn Any + 'static + Send>;
         let result: std::thread::Result<A> = Err(result);
         let mut builder = TaskItemBuilder::new(fn_id, place, activity_id);
-        builder.ret_squash(result);
+        builder.ret(result);
         let mut ex = TaskItemExtracter::new(builder.build());
-        assert_eq!(ex.ret_squash::<A>().unwrap_err(), msg);
+        assert_eq!(ex.ret::<A>().unwrap_err(), msg);
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use crate::activity::AbstractSquashBuffer;
 use crate::activity::AbstractSquashBufferFactory;
 use crate::activity::ActivityId;
-use crate::activity::NameToRemove;
 use crate::args::RemoteSend;
 use crate::activity::StaticSquashBufferFactory;
 use crate::activity::TaskItem;
@@ -193,7 +192,7 @@ impl ApgasContext for ConcreteContext {
     }
 }
 
-pub async fn wait_single<T: NameToRemove>(wait_this: ActivityId) -> T {
+pub async fn wait_single<T: RemoteSend>(wait_this: ActivityId) -> T {
     // TODO dup code
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
     get_wait_request_sender_ref()
@@ -202,18 +201,6 @@ pub async fn wait_single<T: NameToRemove>(wait_this: ActivityId) -> T {
     let item = rx.await.unwrap();
     let mut ex = TaskItemExtracter::new(*item);
     let ret = ex.ret::<T>();
-    ret.unwrap() // assert no panic here TODO: deal with panic payload
-}
-
-pub async fn wait_single_squash<T: RemoteSend>(wait_this: ActivityId) -> T {
-    // TODO dup code
-    let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
-    get_wait_request_sender_ref()
-        .send(Box::new((WaitItem::One(wait_this), tx)))
-        .unwrap();
-    let item = rx.await.unwrap();
-    let mut ex = TaskItemExtracter::new(*item);
-    let ret = ex.ret_squash::<T>();
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
@@ -673,7 +660,7 @@ mod test {
         }
     }
 
-    fn send_2_local<T: NameToRemove>(
+    fn send_2_local<T: RemoteSend>(
         aid: ActivityId,
         result_value: T,
         sub_activities: Vec<ActivityId>,
@@ -716,7 +703,7 @@ mod test {
         ConcreteContext::send(builder.build_box());
 
         let mut builder = TaskItemBuilder::new(0, here, aid);
-        builder.ret_squash(thread::Result::<T>::Ok(result_value));
+        builder.ret(thread::Result::<T>::Ok(result_value));
         builder.waited();
         ConcreteContext::send(builder.build_box());
     }
@@ -770,7 +757,7 @@ mod test {
         for value in 0..1024 {
             let new_aid = ctx.spawn();
             let return_a = A { value };
-            wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
+            wait_squash.push((wait_single::<A>(new_aid), return_a.clone()));
             send_2_squash_local(new_aid, return_a, vec![]);
         }
         for (f, v) in wait_these {
@@ -857,7 +844,7 @@ mod test {
         let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
         builder.arg(1usize);
         builder.arg(0.5f64);
-        builder.arg_squash(A { value: 123 });
+        builder.arg(A { value: 123 });
         ConcreteContext::send(builder.build_box());
         let item = worker_receiver.blocking_recv().unwrap();
         let mut e = TaskItemExtracter::new(*item);
@@ -866,7 +853,7 @@ mod test {
         assert_eq!(e.activity_id(), 3);
         assert_eq!(e.arg::<usize>(), 1);
         assert_eq!(e.arg::<f64>(), 0.5);
-        assert_eq!(e.arg_squash::<A>(), A { value: 123 });
+        assert_eq!(e.arg::<A>(), A { value: 123 });
     }
 
     use crate::activity::test::_clone;
@@ -915,7 +902,7 @@ mod test {
         for i in 0..100usize {
             let mut b = TaskItemBuilder::new(i as FunctionLabel, 9, i as ActivityId);
             b.arg(i);
-            b.arg_squash(A { value: i });
+            b.arg(A { value: i });
             a_task.push(b.build_box());
         }
 
@@ -986,9 +973,9 @@ mod test {
                         let ret = e.arg::<usize>() - 1; // calculation
                         build_for_wait_single.ret(thread::Result::<usize>::Ok(ret));
                     } else if e.fn_id() == fid_handle_squash {
-                        let mut ret_a = e.arg_squash::<A>();
+                        let mut ret_a = e.arg::<A>();
                         ret_a.value -= 1;
-                        build_for_wait_single.ret_squash(thread::Result::<A>::Ok(ret_a));
+                        build_for_wait_single.ret(thread::Result::<A>::Ok(ret_a));
                     } else {
                         panic!()
                     }
@@ -1022,10 +1009,10 @@ mod test {
             for value in 0..1024 {
                 let new_aid = ctx.spawn();
                 let return_a = A { value };
-                wait_squash.push((wait_single_squash::<A>(new_aid), return_a.clone()));
+                wait_squash.push((wait_single::<A>(new_aid), return_a.clone()));
                 // prepare request
                 let mut builder = TaskItemBuilder::new(fid_handle_squash, dst_place, new_aid);
-                builder.arg_squash(A { value: value + 1 });
+                builder.arg(A { value: value + 1 });
                 builder.waited();
                 ConcreteContext::send(builder.build_box());
             }

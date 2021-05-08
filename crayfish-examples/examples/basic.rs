@@ -25,11 +25,11 @@ use std::any::TypeId;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 use std::thread;
+use std::cmp::Ordering;
 
 extern crate crayfish;
 extern crate futures;
 extern crate serde;
-extern crate tokio;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct A {
@@ -56,6 +56,9 @@ impl RemoteSend for A {
             A { value: ret }
         })
     }
+    fn reorder(&self, other: &Self) -> Ordering{
+        self.cmp(other)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
@@ -74,6 +77,9 @@ impl RemoteSend for B {
     fn extract(out: &mut Self::Output) -> Option<Self> {
         out.list.pop().map(|value| B { value })
     }
+    fn reorder(&self, other: &Self) -> Ordering{
+        self.cmp(other)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +87,22 @@ struct R {
     a: A,
     b: B,
     c: i32,
+}
+
+impl RemoteSend for R{
+    type Output = ();
+    fn fold(&self, _acc: &mut Self::Output) {
+        panic!()
+    }
+    fn extract(_out: &mut Self::Output) -> Option<Self> {
+        panic!()
+    }
+    fn reorder(&self, _other: &Self) -> Ordering{
+        panic!()
+    }
+    fn is_squashable() -> bool {
+        false
+    }
 }
 
 fn set_helpers() {
@@ -153,8 +175,8 @@ async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
     execute_and_send_fn0(
         my_activity_id,
         waited,
-        e.arg_squash(),
-        e.arg_squash(),
+        e.arg(),
+        e.arg(),
         e.arg(),
     )
     .await; // macro
@@ -175,12 +197,12 @@ fn async_create_for_fn_id_0(
 
     let f = wait_single::<R>(my_activity_id); // macro
     if dst_place == global_id::here() {
-        tokio::spawn(execute_and_send_fn0(my_activity_id, true, a, b, c)); // macro
+        crayfish::spawn(execute_and_send_fn0(my_activity_id, true, a, b, c)); // macro
     } else {
         trace!("spawn activity:{} at place: {}", my_activity_id, dst_place);
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
-        builder.arg_squash(a); //  macro
-        builder.arg_squash(b); // macro
+        builder.arg(a); //  macro
+        builder.arg(b); // macro
         builder.arg(c); //macro
         builder.waited();
         let item = builder.build_box();
@@ -203,11 +225,11 @@ fn async_create_no_wait_for_fn_id_0(
 
     if dst_place == global_id::here() {
         // no wait, set flag = flase
-        tokio::spawn(execute_and_send_fn0(my_activity_id, false, a, b, c)); // macro
+        crayfish::spawn(execute_and_send_fn0(my_activity_id, false, a, b, c)); // macro
     } else {
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
-        builder.arg_squash(a); //  macro
-        builder.arg_squash(b); // macro
+        builder.arg(a); //  macro
+        builder.arg(b); // macro
         builder.arg(c); //macro
         let item = builder.build_box();
         ConcreteContext::send(item);

@@ -24,12 +24,12 @@ pub trait RemoteSend: Serialize + DeserializeOwned + Any + Send + 'static {
     // squash type not necessarily to be serde
     type Output: Squashed;
     /// folding is from left to right
-    fn fold(&self, _acc: &mut Self::Output);
+    fn fold(&self, acc: &mut Self::Output);
     /// folding is from right to left
-    fn extract(_out: &mut Self::Output) -> Option<Self>
+    fn extract(out: &mut Self::Output) -> Option<Self>
     where
         Self: Sized;
-    fn cmp(&self, _other: &Self) -> Ordering;
+    fn reorder(&self, other: &Self) -> Ordering;
     fn is_squashable() -> bool {
         true
     }
@@ -53,7 +53,7 @@ macro_rules! impl_body {
         {
             panic!()
         }
-        fn cmp(&self, _other: &Self) -> Ordering{
+        fn reorder(&self, _other: &Self) -> Ordering{
             panic!()
         }
 
