@@ -13,10 +13,9 @@ use crate::runtime::take_message_buffer_receiver;
 use crate::runtime::take_worker_task_receiver;
 use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
+use crate::executor;
 use futures::Future;
 use std::thread;
-
-extern crate tokio;
 
 pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD, set_helpers: impl FnOnce()) -> MOUT
 where
@@ -77,21 +76,21 @@ where
     let hub_thread = thread::spawn(move || hub.run());
 
     // start workers
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = executor::runtime::Runtime::new().unwrap();
 
     // worker loop
     let worker_loop = async move {
         let mut task_receiver = take_worker_task_receiver();
         while let Some(task) = task_receiver.recv().await {
-            tokio::spawn(worker_dispatch(*task));
+            executor::spawn(worker_dispatch(*task));
         }
         debug!("worker task loop stops");
     };
 
     // main
     let ret = rt.block_on(async move {
-        tokio::spawn(worker_loop);
-        tokio::spawn(main).await.unwrap()
+        executor::spawn(worker_loop);
+        executor::spawn(main).await.unwrap()
     });
 
     // should not perform any network before init done

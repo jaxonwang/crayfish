@@ -27,7 +27,6 @@ extern crate futures;
 extern crate rand;
 extern crate crayfish;
 extern crate serde;
-extern crate tokio;
 
 fn quick_sort<'a>(
     ctx: &'a mut impl ApgasContext,
@@ -121,7 +120,7 @@ fn async_create_for_fn_id_0(
 
     let f = wait_single::<Vec<usize>>(my_activity_id); // macro
     if dst_place == global_id::here() {
-        tokio::spawn(execute_and_send_fn0(my_activity_id, true, nums)); // macro
+        crayfish::spawn(execute_and_send_fn0(my_activity_id, true, nums)); // macro
     } else {
         trace!("spawn activity:{} at place: {}", my_activity_id, dst_place);
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
@@ -145,7 +144,7 @@ fn async_create_no_wait_for_fn_id_0(
 
     if dst_place == global_id::here() {
         // no wait, set flag = flase
-        tokio::spawn(execute_and_send_fn0(my_activity_id, false, nums)); // macro
+        crayfish::spawn(execute_and_send_fn0(my_activity_id, false, nums)); // macro
     } else {
         let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
         builder.arg(nums); //macro

@@ -4,4 +4,5 @@ members = [
   "crayfish",
   "crayfish-macros",
   "gex-sys",
+  "crayfish-examples"
 ]
