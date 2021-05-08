@@ -1,6 +1,14 @@
+use crate::activity::copy_panic_payload;
+use crate::activity::ActivityId;
+use crate::activity::FunctionLabel;
 use crate::activity::SquashBufferFactory;
 use crate::activity::TaskItem;
+use crate::activity::TaskItemBuilder;
+use crate::args::RemoteSend;
+use crate::executor;
 use crate::global_id;
+use crate::global_id::ActivityIdMethods;
+use crate::global_id::FinishIdMethods;
 use crate::logging;
 use crate::logging::*;
 use crate::network;
@@ -11,11 +19,46 @@ use crate::runtime::init_worker_task_queue;
 use crate::runtime::message_recv_callback;
 use crate::runtime::take_message_buffer_receiver;
 use crate::runtime::take_worker_task_receiver;
+use crate::runtime::ApgasContext;
+use crate::runtime::ConcreteContext;
 use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
-use crate::executor;
 use futures::Future;
 use std::thread;
+
+pub fn send_activity_result<T: RemoteSend>(
+    ctx: impl ApgasContext,
+    a_id: ActivityId,
+    fn_id: FunctionLabel,
+    waited: bool,
+    result: std::thread::Result<T>,
+) {
+    let finish_id = a_id.get_finish_id();
+    let stripped_result = match &result {
+        // copy payload
+        Ok(_) => thread::Result::<()>::Ok(()),
+        Err(e) => thread::Result::<()>::Err(copy_panic_payload(e)),
+    };
+
+    // TODO panic all or panic single?
+    // should set dst place of return to it's finishid, to construct calling tree
+    let mut builder = TaskItemBuilder::new(fn_id, finish_id.get_place(), a_id);
+    let spawned_activities = ctx.spawned(); // get activity spawned in real_fn
+    builder.ret(stripped_result); // strip return value
+    builder.sub_activities(spawned_activities.clone());
+    let item = builder.build_box();
+    ConcreteContext::send(item);
+    // send to the place waited (spawned)
+    if waited {
+        // two ret must be identical if dst is the same place
+        let mut builder = TaskItemBuilder::new(fn_id, a_id.get_spawned_place(), a_id);
+        builder.ret(result); // macro
+        builder.sub_activities(spawned_activities);
+        builder.waited();
+        let item = builder.build_box();
+        ConcreteContext::send(item);
+    }
+}
 
 pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD, set_helpers: impl FnOnce()) -> MOUT
 where

@@ -1,4 +1,3 @@
-use crayfish::activity::copy_panic_payload;
 use crayfish::activity::init_helpers;
 use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
@@ -8,10 +7,9 @@ use crayfish::args::RemoteSend;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
-use crayfish::essence::genesis;
+use crayfish::essence;
 use crayfish::global_id;
 use crayfish::global_id::ActivityIdMethods;
-use crayfish::global_id::FinishIdMethods;
 use crayfish::logging::*;
 use crayfish::place::Place;
 use crayfish::runtime::wait_all;
@@ -24,7 +22,6 @@ use serde::Serialize;
 use std::any::TypeId;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
-use std::thread;
 use std::cmp::Ordering;
 
 extern crate crayfish;
@@ -119,7 +116,7 @@ async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
         let here = global_id::here();
         let world_size = global_id::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
-        async_create_no_wait_for_fn_id_0(ctx, dst_place, a.clone(), b.clone(), c + 1);
+        async_create_no_wait_for_fn_id_0(ctx.spawn(), dst_place, a.clone(), b.clone(), c + 1);
     }
     R { a, b, c: c + 1 }
 }
@@ -132,31 +129,7 @@ async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: A, b:
     // ctx seems to be unwind safe
     let future = AssertUnwindSafe(real_fn(&mut ctx, a, b, c)); //macro
     let result = future.catch_unwind().await;
-    let stripped_result = match &result {
-        // copy payload
-        Ok(_) => thread::Result::<()>::Ok(()),
-        Err(e) => thread::Result::<()>::Err(copy_panic_payload(e)),
-    };
-
-    // TODO panic all or panic single?
-    // should set dst place of return to it's finishid, to construct calling tree
-    let mut builder = TaskItemBuilder::new(fn_id, finish_id.get_place(), my_activity_id);
-    let spawned_activities = ctx.spawned(); // get activity spawned in real_fn
-    builder.ret(stripped_result); // strip return value
-    builder.sub_activities(spawned_activities.clone());
-    let item = builder.build_box();
-    ConcreteContext::send(item);
-    // send to the place waited (spawned)
-    if waited {
-        // two ret must be identical if dst is the same place
-        let mut builder =
-            TaskItemBuilder::new(fn_id, my_activity_id.get_spawned_place(), my_activity_id);
-        builder.ret(result); // macro
-        builder.sub_activities(spawned_activities);
-        builder.waited();
-        let item = builder.build_box();
-        ConcreteContext::send(item);
-    }
+    essence::send_activity_result(ctx, my_activity_id, fn_id, waited, result);
 }
 
 // the one executed by worker
@@ -185,14 +158,13 @@ async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
 // the desugered at async and wait
 fn async_create_for_fn_id_0(
     // TODO: dont' use &mut ctx, for boxed lifetime
-    ctx: &mut impl ApgasContext,
+    my_activity_id: ActivityId,
     dst_place: Place,
     a: A,
     b: B,
     c: i32,
 ) -> impl futures::Future<Output = R> {
     // macro
-    let my_activity_id = ctx.spawn(); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
     let f = wait_single::<R>(my_activity_id); // macro
@@ -213,14 +185,13 @@ fn async_create_for_fn_id_0(
 
 // the desugered at async no wait
 fn async_create_no_wait_for_fn_id_0(
-    ctx: &mut impl ApgasContext,
+    my_activity_id: ActivityId,
     dst_place: Place,
     a: A,
     b: B,
     c: i32,
 ) {
     // macro
-    let my_activity_id = ctx.spawn(); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
     if dst_place == global_id::here() {
@@ -250,7 +221,7 @@ async fn finish() {
         // debug!("waiting return of the function");
         // let ret = f.await; // if await, remove it from activity list this finish block will wait
         // debug!("got return value {:?}", ret);
-        async_create_no_wait_for_fn_id_0(&mut ctx, dst_place, A { value: 2 }, B { value: 3 }, 1);
+        async_create_no_wait_for_fn_id_0(ctx.spawn(), dst_place, A { value: 2 }, B { value: 3 }, 1);
 
         wait_all(ctx).await;
         info!("Main finished")
@@ -258,5 +229,5 @@ async fn finish() {
 }
 
 pub fn main() {
-    genesis(finish(), real_fn_wrap_execute_from_remote, set_helpers);
+    essence::genesis(finish(), real_fn_wrap_execute_from_remote, set_helpers);
 }

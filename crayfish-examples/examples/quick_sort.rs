@@ -1,31 +1,28 @@
-use futures::future::BoxFuture;
-use futures::FutureExt;
-use rand::seq::SliceRandom;
-use rand::SeedableRng;
-use crayfish::activity::copy_panic_payload;
 use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
-use crayfish::essence::genesis;
+use crayfish::essence;
 use crayfish::global_id;
 use crayfish::global_id::here;
 use crayfish::global_id::world_size;
 use crayfish::global_id::ActivityIdMethods;
-use crayfish::global_id::FinishIdMethods;
 use crayfish::logging::*;
 use crayfish::place::Place;
 use crayfish::runtime::wait_all;
 use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
+use futures::future::BoxFuture;
+use futures::FutureExt;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 use std::panic::AssertUnwindSafe;
-use std::thread;
 
+extern crate crayfish;
 extern crate futures;
 extern crate rand;
-extern crate crayfish;
 extern crate serde;
 
 fn quick_sort<'a>(
@@ -60,37 +57,13 @@ fn quick_sort<'a>(
 
 // block until real function finished
 async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: Vec<usize>) {
-    let fn_id = 0; // macro
+    let fn_id: FunctionLabel = 0; // macro
     let finish_id = my_activity_id.get_finish_id();
     let mut ctx = ConcreteContext::inherit(finish_id);
     // ctx seems to be unwind safe
     let future = AssertUnwindSafe(quick_sort(&mut ctx, a)); //macro
     let result = future.catch_unwind().await;
-    let stripped_result = match &result {
-        // copy payload
-        Ok(_) => thread::Result::<()>::Ok(()),
-        Err(e) => thread::Result::<()>::Err(copy_panic_payload(e)),
-    };
-
-    // TODO panic all or panic single?
-    // should set dst place of return to it's finishid, to construct calling tree
-    let mut builder = TaskItemBuilder::new(fn_id, finish_id.get_place(), my_activity_id);
-    let spawned_activities = ctx.spawned(); // get activity spawned in real_fn
-    builder.ret(stripped_result); // strip return value
-    builder.sub_activities(spawned_activities.clone());
-    let item = builder.build_box();
-    ConcreteContext::send(item);
-    // send to the place waited (spawned)
-    if waited {
-        // two ret must be identical if dst is the same place
-        let mut builder =
-            TaskItemBuilder::new(fn_id, my_activity_id.get_spawned_place(), my_activity_id);
-        builder.ret(result); // macro
-        builder.sub_activities(spawned_activities);
-        builder.waited();
-        let item = builder.build_box();
-        ConcreteContext::send(item);
-    }
+    essence::send_activity_result(ctx, my_activity_id, fn_id, waited, result);
 }
 
 // the one executed by worker
@@ -118,7 +91,7 @@ fn async_create_for_fn_id_0(
     // macro
     let fn_id: FunctionLabel = 0; // macro
 
-    let f = wait_single::<Vec<usize>>(my_activity_id); // macro
+    let f = wait_single(my_activity_id); // macro
     if dst_place == global_id::here() {
         crayfish::spawn(execute_and_send_fn0(my_activity_id, true, nums)); // macro
     } else {
@@ -134,12 +107,11 @@ fn async_create_for_fn_id_0(
 
 // the desugered at async no wait
 fn async_create_no_wait_for_fn_id_0(
-    ctx: &mut impl ApgasContext,
+    my_activity_id: ActivityId,
     dst_place: Place,
     nums: Vec<usize>,
 ) {
     // macro
-    let my_activity_id = ctx.spawn(); // register to remote
     let fn_id: FunctionLabel = 0; // macro
 
     if dst_place == global_id::here() {
@@ -172,9 +144,5 @@ async fn finish() -> Result<(), std::io::Error> {
 }
 
 pub fn main() -> Result<(), std::io::Error> {
-    genesis(
-        finish(),
-        real_fn_wrap_execute_from_remote,
-        ||{}
-    )
+    essence::genesis(finish(), real_fn_wrap_execute_from_remote, || {})
 }

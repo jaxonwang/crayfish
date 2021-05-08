@@ -26,7 +26,7 @@ extern crate serde;
 
 pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
-pub type FunctionLabel = u32; // function label is line
+pub type FunctionLabel = u64; // function label is line
 pub type ActivityResult = std::result::Result<(), PanicPayload>;
 
 pub fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayload {
