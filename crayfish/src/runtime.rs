@@ -1,8 +1,8 @@
 use crate::activity::AbstractSquashBuffer;
 use crate::activity::AbstractSquashBufferFactory;
 use crate::activity::ActivityId;
-use crate::activity::RemoteSend;
-use crate::activity::Squashable;
+use crate::activity::NameToRemove;
+use crate::args::RemoteSend;
 use crate::activity::StaticSquashBufferFactory;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemBuilder;
@@ -193,7 +193,7 @@ impl ApgasContext for ConcreteContext {
     }
 }
 
-pub async fn wait_single<T: RemoteSend>(wait_this: ActivityId) -> T {
+pub async fn wait_single<T: NameToRemove>(wait_this: ActivityId) -> T {
     // TODO dup code
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
     get_wait_request_sender_ref()
@@ -205,7 +205,7 @@ pub async fn wait_single<T: RemoteSend>(wait_this: ActivityId) -> T {
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-pub async fn wait_single_squash<T: Squashable>(wait_this: ActivityId) -> T {
+pub async fn wait_single_squash<T: RemoteSend>(wait_this: ActivityId) -> T {
     // TODO dup code
     let (tx, rx) = oneshot::channel::<Box<TaskItem>>();
     get_wait_request_sender_ref()
@@ -673,7 +673,7 @@ mod test {
         }
     }
 
-    fn send_2_local<T: RemoteSend>(
+    fn send_2_local<T: NameToRemove>(
         aid: ActivityId,
         result_value: T,
         sub_activities: Vec<ActivityId>,
@@ -704,7 +704,7 @@ mod test {
         ConcreteContext::send(builder.build_box());
     }
 
-    fn send_2_squash_local<T: Squashable>(
+    fn send_2_squash_local<T: RemoteSend>(
         aid: ActivityId,
         result_value: T,
         sub_activities: Vec<ActivityId>,
