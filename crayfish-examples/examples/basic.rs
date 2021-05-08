@@ -1,6 +1,5 @@
 use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
-use crayfish::activity::HelperByType;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
@@ -21,7 +20,6 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde::Serialize;
-use std::any::TypeId;
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
@@ -61,7 +59,7 @@ impl RemoteSend for A {
 }
 
 crayfish::inventory::submit! {
-    SquashHelperMeta::new(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()))
+    SquashHelperMeta::new::<A>()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
@@ -86,7 +84,7 @@ impl RemoteSend for B {
 }
 
 crayfish::inventory::submit! {
-    SquashHelperMeta::new(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()))
+    SquashHelperMeta::new::<B>()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
