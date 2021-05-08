@@ -157,5 +157,5 @@ async fn finish() -> Result<(), std::io::Error> {
 }
 
 pub fn main() -> Result<(), std::io::Error> {
-    essence::genesis(finish(), || {})
+    essence::genesis(finish())
 }

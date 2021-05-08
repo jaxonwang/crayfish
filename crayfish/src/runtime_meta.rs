@@ -1,10 +1,14 @@
 use crate::activity::FunctionLabel;
 use crate::activity::TaskItem;
+use crate::activity::SquashTypeHelper;
+use crate::activity::HelperMap;
+use crate::activity::set_helpers;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::sync::Mutex;
+use std::any::TypeId;
 
 extern crate futures;
 pub extern crate inventory;
@@ -46,7 +50,7 @@ type FuncMetaTable = FxHashMap<FunctionLabel, FunctionMetaData>;
 static STATIC_FUNC_META_TABLE: Lazy<Mutex<FuncMetaTable>> =
     Lazy::new(|| Mutex::new(FuncMetaTable::default()));
 
-pub fn init_func_table() {
+pub(crate) fn init_func_table() {
     let mut m = STATIC_FUNC_META_TABLE.lock().unwrap();
     for func_data in inventory::iter::<FunctionMetaData> {
         let exist = m.insert(func_data.fn_id, func_data.clone());
@@ -57,7 +61,7 @@ pub fn init_func_table() {
     }
 }
 
-pub fn get_func_table() -> &'static FuncMetaTable {
+pub(crate) fn get_func_table() -> &'static FuncMetaTable {
     thread_local! {
         static FUNC_META_TABLE: Cell<Option<FuncMetaTable>> = Cell::new(None);
     }
@@ -71,6 +75,31 @@ pub fn get_func_table() -> &'static FuncMetaTable {
             get_func_table()
         }
     })
+}
+
+#[derive(Clone)]
+pub struct SquashHelperMeta{
+    type_id: TypeId,
+    helper: Box<dyn SquashTypeHelper + Send>,
+}
+
+impl SquashHelperMeta{
+    pub fn new(type_id:TypeId, helper: Box<dyn SquashTypeHelper + Send>) -> Self{
+        SquashHelperMeta{
+            type_id,
+            helper
+        }
+    }
+}
+
+inventory::collect!(SquashHelperMeta);
+
+pub(crate) fn init_helpers(){
+    let mut helpers = HelperMap::default();
+    for h in inventory::iter::<SquashHelperMeta> {
+        helpers.insert(h.type_id, h.helper.clone());
+    }
+    set_helpers(helpers);
 }
 
 // This mod is trying to do something like "check types at compiling time"
