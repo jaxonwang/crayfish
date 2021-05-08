@@ -68,7 +68,7 @@ fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()>{
     resovled(item)
 }
 
-pub fn genesis<F, MOUT>(main: F, set_helpers: impl FnOnce()) -> MOUT
+pub fn genesis<F, MOUT>(main: F) -> MOUT
 where
     F: Future<Output = MOUT> + Send + 'static,
     MOUT: Send + 'static,
@@ -80,7 +80,7 @@ where
     runtime_meta::init_func_table();
 
     // register dynamic operations for squahable
-    set_helpers();
+    runtime_meta::init_helpers();
 
     // prepare callback
     let msg_recv_callback =

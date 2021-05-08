@@ -309,7 +309,7 @@ pub type HelperMap = FxHashMap<TypeId, Box<dyn SquashTypeHelper + Send>>;
 
 static SQUASH_HELPERS: Lazy<Mutex<HelperMap>> = Lazy::new(|| Mutex::new(HelperMap::default()));
 
-pub fn init_helpers(helpers: HelperMap) {
+pub fn set_helpers(helpers: HelperMap) {
     let mut h = SQUASH_HELPERS.lock().unwrap();
     *h = helpers
 }
@@ -935,7 +935,7 @@ pub mod test {
         let mut helpers = HelperMap::default();
         helpers.insert(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()));
         helpers.insert(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()));
-        init_helpers(helpers);
+        set_helpers(helpers);
     }
     pub struct TestGuardForStatic<'a> {
         _guard: MutexGuard<'a, bool>,

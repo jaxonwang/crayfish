@@ -1,8 +1,6 @@
-use crayfish::activity::init_helpers;
 use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
 use crayfish::activity::HelperByType;
-use crayfish::activity::HelperMap;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
@@ -17,6 +15,7 @@ use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
 use crayfish::runtime_meta::FunctionMetaData;
+use crayfish::runtime_meta::SquashHelperMeta;
 use crayfish::inventory;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -61,6 +60,10 @@ impl RemoteSend for A {
     }
 }
 
+crayfish::inventory::submit! {
+    SquashHelperMeta::new(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct B {
     pub value: u8,
@@ -80,6 +83,10 @@ impl RemoteSend for B {
     fn reorder(&self, other: &Self) -> Ordering {
         self.cmp(other)
     }
+}
+
+crayfish::inventory::submit! {
+    SquashHelperMeta::new(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,13 +110,6 @@ impl RemoteSend for R {
     fn is_squashable() -> bool {
         false
     }
-}
-
-fn set_helpers() {
-    let mut helpers = HelperMap::default();
-    helpers.insert(TypeId::of::<B>(), Box::new(HelperByType::<B>::default()));
-    helpers.insert(TypeId::of::<A>(), Box::new(HelperByType::<A>::default()));
-    init_helpers(helpers);
 }
 
 async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
@@ -237,5 +237,5 @@ async fn finish() {
 }
 
 pub fn main() {
-    essence::genesis(finish(), set_helpers);
+    essence::genesis(finish());
 }
