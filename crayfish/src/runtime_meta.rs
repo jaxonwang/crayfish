@@ -1,12 +1,77 @@
-// use crate::args::RemoteSend;
-// use crate::activity::SquashableObject;
-// use once_cell::sync::Lazy;
-// use rustc_hash::FxHashMap;
-// use std::any::Any;
-// use std::any::TypeId;
-// use std::cell::Cell;
-// use std::mem;
-// use std::sync::Mutex;
+use crate::activity::FunctionLabel;
+use crate::activity::TaskItem;
+use futures::future::BoxFuture;
+use once_cell::sync::Lazy;
+use rustc_hash::FxHashMap;
+use std::cell::Cell;
+use std::sync::Mutex;
+
+extern crate futures;
+pub extern crate inventory;
+
+pub type DispatchFunction = fn(TaskItem) -> BoxFuture<'static, ()>;
+
+#[derive(Clone, Debug)]
+pub struct FunctionMetaData {
+    pub(crate) fn_id: FunctionLabel,
+    pub(crate) fn_ptr: DispatchFunction,
+    pub(crate) fn_name: String,
+    pub(crate) file: String,
+    pub(crate) line: u32,
+    pub(crate) mod_path: String,
+}
+impl FunctionMetaData {
+    pub fn new(
+        fn_id: FunctionLabel,
+        fn_ptr: DispatchFunction,
+        fn_name: String,
+        file: String,
+        line: u32,
+        mod_path: String,
+    ) -> Self {
+        FunctionMetaData {
+            fn_id,
+            fn_ptr,
+            fn_name,
+            file,
+            line,
+            mod_path,
+        }
+    }
+}
+
+inventory::collect!(FunctionMetaData);
+
+type FuncMetaTable = FxHashMap<FunctionLabel, FunctionMetaData>;
+static STATIC_FUNC_META_TABLE: Lazy<Mutex<FuncMetaTable>> =
+    Lazy::new(|| Mutex::new(FuncMetaTable::default()));
+
+pub fn init_func_table() {
+    let mut m = STATIC_FUNC_META_TABLE.lock().unwrap();
+    for func_data in inventory::iter::<FunctionMetaData> {
+        let exist = m.insert(func_data.fn_id, func_data.clone());
+        if let Some(origin) = exist {
+            panic!("Found function id conflict!
+            The hash of following function metadata are the same: {:?} {:?}", *func_data, origin)
+        }
+    }
+}
+
+pub fn get_func_table() -> &'static FuncMetaTable {
+    thread_local! {
+        static FUNC_META_TABLE: Cell<Option<FuncMetaTable>> = Cell::new(None);
+    }
+    FUNC_META_TABLE.with(|s| {
+        let maybe_ref: &Option<_> = unsafe { &*s.as_ptr() };
+        if let Some(s_ref) = maybe_ref.as_ref() {
+            s_ref
+        } else {
+            let cloned = STATIC_FUNC_META_TABLE.lock().unwrap().clone();
+            s.set(Some(cloned));
+            get_func_table()
+        }
+    })
+}
 
 // This mod is trying to do something like "check types at compiling time"
 // Dark Magic: Just register all type of squashable, and manually create dyn trait at runtime

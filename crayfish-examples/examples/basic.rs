@@ -3,10 +3,10 @@ use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
 use crayfish::activity::HelperByType;
 use crayfish::activity::HelperMap;
-use crayfish::args::RemoteSend;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
+use crayfish::args::RemoteSend;
 use crayfish::essence;
 use crayfish::global_id;
 use crayfish::global_id::ActivityIdMethods;
@@ -16,13 +16,16 @@ use crayfish::runtime::wait_all;
 use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
+use crayfish::runtime_meta::FunctionMetaData;
+use crayfish::inventory;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde::Serialize;
 use std::any::TypeId;
+use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
-use std::cmp::Ordering;
 
 extern crate crayfish;
 extern crate futures;
@@ -53,7 +56,7 @@ impl RemoteSend for A {
             A { value: ret }
         })
     }
-    fn reorder(&self, other: &Self) -> Ordering{
+    fn reorder(&self, other: &Self) -> Ordering {
         self.cmp(other)
     }
 }
@@ -74,7 +77,7 @@ impl RemoteSend for B {
     fn extract(out: &mut Self::Output) -> Option<Self> {
         out.list.pop().map(|value| B { value })
     }
-    fn reorder(&self, other: &Self) -> Ordering{
+    fn reorder(&self, other: &Self) -> Ordering {
         self.cmp(other)
     }
 }
@@ -86,7 +89,7 @@ struct R {
     c: i32,
 }
 
-impl RemoteSend for R{
+impl RemoteSend for R {
     type Output = ();
     fn fold(&self, _acc: &mut Self::Output) {
         panic!()
@@ -94,7 +97,7 @@ impl RemoteSend for R{
     fn extract(_out: &mut Self::Output) -> Option<Self> {
         panic!()
     }
-    fn reorder(&self, _other: &Self) -> Ordering{
+    fn reorder(&self, _other: &Self) -> Ordering {
         panic!()
     }
     fn is_squashable() -> bool {
@@ -133,26 +136,31 @@ async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: A, b:
 }
 
 // the one executed by worker
-async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
-    let waited = item.is_waited();
-    let mut e = TaskItemExtracter::new(item);
-    let my_activity_id = e.activity_id();
-    let _fn_id = e.fn_id(); // dispatch
+fn real_fn_wrap_execute_from_remote(item: TaskItem) -> BoxFuture<'static, ()> {
+    async move {
+        let waited = item.is_waited();
+        let mut e = TaskItemExtracter::new(item);
+        let my_activity_id = e.activity_id();
 
-    // wait until function return
-    trace!(
-        "Got activity:{} from {}",
-        my_activity_id,
-        my_activity_id.get_spawned_place()
-    );
-    execute_and_send_fn0(
-        my_activity_id,
-        waited,
-        e.arg(),
-        e.arg(),
-        e.arg(),
-    )
-    .await; // macro
+        // wait until function return
+        trace!(
+            "Got activity:{} from {}",
+            my_activity_id,
+            my_activity_id.get_spawned_place()
+        );
+        execute_and_send_fn0(my_activity_id, waited, e.arg(), e.arg(), e.arg()).await;
+        // macro
+    }
+    .boxed()
+}
+
+crayfish::inventory::submit! {
+    FunctionMetaData::new(0, real_fn_wrap_execute_from_remote,
+                          String::from("basic"),
+                          String::from(file!()),
+                          line!(),
+                          String::from(module_path!())
+                          )
 }
 
 // the desugered at async and wait
@@ -229,5 +237,5 @@ async fn finish() {
 }
 
 pub fn main() {
-    essence::genesis(finish(), real_fn_wrap_execute_from_remote, set_helpers);
+    essence::genesis(finish(), set_helpers);
 }

@@ -17,6 +17,7 @@ mod executor;
 mod prelude {
     pub use crate::executor::spawn;
     pub use crate::executor::runtime;
+    pub use crate::runtime_meta::inventory;
 }
 
 pub use crate::prelude::*;

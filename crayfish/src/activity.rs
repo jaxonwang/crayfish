@@ -603,6 +603,9 @@ impl TaskItem {
     pub fn is_waited(&self) -> bool {
         self.inner.waited
     }
+    pub fn function_id(&self) -> FunctionLabel{
+        self.inner.fn_id
+    }
 }
 
 pub struct TaskItemExtracter {
