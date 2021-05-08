@@ -6,6 +6,7 @@ use crate::activity::TaskItem;
 use crate::activity::TaskItemBuilder;
 use crate::args::RemoteSend;
 use crate::executor;
+use crate::runtime_meta;
 use crate::global_id;
 use crate::global_id::ActivityIdMethods;
 use crate::global_id::FinishIdMethods;
@@ -24,6 +25,7 @@ use crate::runtime::ConcreteContext;
 use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
 use futures::Future;
+use futures::future::BoxFuture;
 use std::thread;
 
 pub fn send_activity_result<T: RemoteSend>(
@@ -60,15 +62,22 @@ pub fn send_activity_result<T: RemoteSend>(
     }
 }
 
-pub fn genesis<F, MOUT, WD, WDF>(main: F, worker_dispatch: WD, set_helpers: impl FnOnce()) -> MOUT
+fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()>{
+    let fn_id = item.function_id();
+    let resovled = runtime_meta::get_func_table().get(&fn_id).unwrap().fn_ptr;
+    resovled(item)
+}
+
+pub fn genesis<F, MOUT>(main: F, set_helpers: impl FnOnce()) -> MOUT
 where
     F: Future<Output = MOUT> + Send + 'static,
     MOUT: Send + 'static,
-    WDF: Future<Output = ()> + Send + 'static,
-    WD: Send + 'static + Fn(TaskItem) -> WDF,
 {
     // logger
     logging::setup_logger().unwrap();
+
+    // the function table for task dispatch by fn_id
+    runtime_meta::init_func_table();
 
     // register dynamic operations for squahable
     set_helpers();

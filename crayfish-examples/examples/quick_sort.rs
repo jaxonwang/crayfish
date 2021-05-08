@@ -14,6 +14,8 @@ use crayfish::runtime::wait_all;
 use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
+use crayfish::runtime_meta::FunctionMetaData;
+use crayfish::inventory;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use rand::seq::SliceRandom;
@@ -67,19 +69,30 @@ async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, a: Vec<u
 }
 
 // the one executed by worker
-async fn real_fn_wrap_execute_from_remote(item: TaskItem) {
-    let waited = item.is_waited();
-    let mut e = TaskItemExtracter::new(item);
-    let my_activity_id = e.activity_id();
-    let _fn_id = e.fn_id(); // dispatch
+fn real_fn_wrap_execute_from_remote(item: TaskItem) -> BoxFuture<'static, ()> {
+    async move {
+        let waited = item.is_waited();
+        let mut e = TaskItemExtracter::new(item);
+        let activity_id = e.activity_id();
 
-    // wait until function return
-    trace!(
-        "Got activity:{} from {}",
-        my_activity_id,
-        my_activity_id.get_spawned_place()
-    );
-    execute_and_send_fn0(my_activity_id, waited, e.arg()).await; // macro
+        // wait until function return
+        trace!(
+            "Got activity:{} from {}",
+            activity_id,
+            activity_id.get_spawned_place()
+        );
+        execute_and_send_fn0(activity_id, waited, e.arg()).await; // macro
+    }
+    .boxed()
+}
+
+crayfish::inventory::submit! {
+    FunctionMetaData::new(0, real_fn_wrap_execute_from_remote,
+                          String::from("quick_sort"),
+                          String::from(file!()),
+                          line!(),
+                          String::from(module_path!())
+                          )
 }
 
 // the desugered at async and wait
@@ -144,5 +157,5 @@ async fn finish() -> Result<(), std::io::Error> {
 }
 
 pub fn main() -> Result<(), std::io::Error> {
-    essence::genesis(finish(), real_fn_wrap_execute_from_remote, || {})
+    essence::genesis(finish(), || {})
 }
