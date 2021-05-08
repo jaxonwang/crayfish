@@ -4,7 +4,7 @@ use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
 use crayfish::activity::HelperByType;
 use crayfish::activity::HelperMap;
-use crayfish::activity::Squashable;
+use crayfish::args::RemoteSend;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
@@ -42,14 +42,14 @@ pub struct AOut {
     diffs: Vec<usize>,
 }
 
-impl Squashable for A {
-    type Squashed = AOut;
-    fn fold(&self, acc: &mut Self::Squashed) {
+impl RemoteSend for A {
+    type Output = AOut;
+    fn fold(&self, acc: &mut Self::Output) {
         assert!(acc.last <= self.value);
         acc.diffs.push((self.value - acc.last).try_into().unwrap());
         acc.last = self.value;
     }
-    fn extract(out: &mut Self::Squashed) -> Option<Self> {
+    fn extract(out: &mut Self::Output) -> Option<Self> {
         out.diffs.pop().map(|x| {
             let ret = out.last;
             out.last = out.last - x as usize;
@@ -66,12 +66,12 @@ pub struct B {
 pub struct BOut {
     list: Vec<u8>,
 }
-impl Squashable for B {
-    type Squashed = BOut;
-    fn fold(&self, acc: &mut Self::Squashed) {
+impl RemoteSend for B {
+    type Output = BOut;
+    fn fold(&self, acc: &mut Self::Output) {
         acc.list.push(self.value);
     }
-    fn extract(out: &mut Self::Squashed) -> Option<Self> {
+    fn extract(out: &mut Self::Output) -> Option<Self> {
         out.list.pop().map(|value| B { value })
     }
 }

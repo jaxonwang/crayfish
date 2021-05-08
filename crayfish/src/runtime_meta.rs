@@ -1,4 +1,4 @@
-use crate::activity::Squashable;
+use crate::args::RemoteSend;
 use crate::activity::SquashableObject;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
@@ -68,7 +68,7 @@ fn get_meta_table() -> &'static TypeMetaInfoTable {
 impl TypeMetaInfo {
     fn new<T>() -> Self
     where
-        T: Squashable + Any + 'static,
+        T: RemoteSend + Any + 'static,
     {
         let fake_value = mem::MaybeUninit::<T>::uninit();
         let fake_value = unsafe { fake_value.assume_init() };
@@ -90,7 +90,7 @@ impl TypeMetaInfo {
 
 pub fn register_squashable<T>()
 where
-    T: Squashable + Any + 'static,
+    T: RemoteSend + Any + 'static,
 {
     let meta_info = TypeMetaInfo::new::<T>();
     STATIC_META_TABLE
@@ -134,7 +134,7 @@ mod test {
 
     use crate::activity::downcast_squashable;
 
-    fn test_cast_of<T: Squashable + std::fmt::Debug + Clone>(list: Vec<Box<T>>) {
+    fn test_cast_of<T: RemoteSend + std::fmt::Debug + Clone>(list: Vec<Box<T>>) {
         let mut a_obj_list = vec![];
         for a in list.iter().cloned() {
             let result = try_cast_squashable_object(*a);

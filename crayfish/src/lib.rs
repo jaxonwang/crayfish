@@ -1,3 +1,5 @@
+
+#![feature(trace_macros)]
 pub mod activity; // TODO private
 mod finish;
 mod gasnet;
@@ -10,5 +12,6 @@ pub mod runtime;
 mod serialization;
 pub mod essence;
 pub mod runtime_meta;
+pub mod args;
 
 mod prelude {}

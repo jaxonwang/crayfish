@@ -2,6 +2,7 @@ pub use crate::global_id::ActivityId;
 use crate::place::Place;
 use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
+use crate::args::RemoteSend;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use serde::de::DeserializeOwned;
@@ -24,8 +25,8 @@ use std::sync::Mutex;
 
 extern crate serde;
 
-pub trait RemoteSend: Serialize + DeserializeOwned + Send {}
-impl<T> RemoteSend for T where T: Serialize + DeserializeOwned + Send {}
+pub trait NameToRemove: Serialize + DeserializeOwned + Send {}
+impl<T> NameToRemove for T where T: Serialize + DeserializeOwned + Send {}
 
 pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
@@ -56,30 +57,6 @@ pub fn copy_panic_payload(
     }
 }
 
-// Squashable is for large size type. Small size type should be wrapped in a largger one
-//
-// Reason 1: I attach each squashable a order label to indicate the original order for the
-// possibility of reordering. Non-arrange squashable in squashed buffer must call different
-// extracting functions for each function signature. Hard to implement
-//
-// Reason 2: for a small primitive type like i32, we want distinguish as certain i32 usage
-// to other i32, since the pattern of a certain usage has compress ratio. So either:
-// 1. wrapped in a unit struct
-// 2. attach a id label. That voliate the intention for compression
-// Primitive type with a pattern (ex. monotonous, same) usually relys on the order of occuring
-// Multi thread generation for such a type would break that pattern. So it's better to wrap
-// in a lager struct where a order label is negligible
-//
-pub trait Squashable: Any + Send + 'static + Ord {
-    // squash type not necessarily to be serde
-    type Squashed: RemoteSend + Default;
-    /// folding is from left to right
-    fn fold(&self, acc: &mut Self::Squashed);
-    /// folding is from right to left
-    fn extract(out: &mut Self::Squashed) -> Option<Self>
-    where
-        Self: Sized;
-}
 
 pub trait SquashableObject: Any + Send + 'static {
     // for downcast
@@ -89,14 +66,14 @@ pub trait SquashableObject: Any + Send + 'static {
 
 impl<T> SquashableObject for T
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn fold(&self, v: &mut SBox) {
         self.fold(&mut v.downcast_mut::<SquashedHolder<T>>().unwrap().squashed);
     }
     fn default_squashed(&self) -> SBox {
         Box::new(SquashedHolder {
-            squashed: T::Squashed::default(),
+            squashed: T::Output::default(),
             _mark: PhantomData::<T>::default(),
         })
     }
@@ -126,20 +103,20 @@ pub(crate) fn downcast_squashable<T: Any>(b: SoBox) -> Result<Box<T>, SoBox> {
 
 impl fmt::Debug for dyn SquashableObject + Send {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("Squashable")
+        f.pad("RemoteSend")
     }
 }
 
-struct SquashedHolder<T: Squashable> {
-    squashed: T::Squashed,
+struct SquashedHolder<T: RemoteSend> {
+    squashed: T::Output,
     _mark: PhantomData<T>,
 }
 
 impl<T> Deref for SquashedHolder<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
-    type Target = T::Squashed;
+    type Target = T::Output;
     fn deref(&self) -> &Self::Target {
         &self.squashed
     }
@@ -147,7 +124,7 @@ where
 
 impl<T> DerefMut for SquashedHolder<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.squashed
@@ -156,27 +133,27 @@ where
 
 impl<T> SquashedHolder<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
-    fn new(squashed: T::Squashed) -> Self {
+    fn new(squashed: T::Output) -> Self {
         SquashedHolder {
             squashed,
             _mark: PhantomData::<T>::default(),
         }
     }
-    fn new_boxed(squashed: T::Squashed) -> Box<Self> {
+    fn new_boxed(squashed: T::Output) -> Box<Self> {
         Box::new(Self::new(squashed))
     }
 }
 
-// a magic to implment dyn T::Squashed where T is not allowed to be trait object
+// a magic to implment dyn T::Output where T is not allowed to be trait object
 pub trait SquashedObject: Send + Any {
     fn extract(&mut self) -> Option<SoBox>;
 }
 
 impl<T> SquashedObject for SquashedHolder<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn extract(&mut self) -> Option<SoBox> {
         T::extract(self).map(|a| Box::new(a) as SoBox)
@@ -205,7 +182,7 @@ impl dyn SquashedObject + Send {
 
 impl fmt::Debug for dyn SquashedObject + Send {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("Squashed")
+        f.pad("Output")
     }
 }
 
@@ -252,13 +229,13 @@ impl DerefMut for SquashedMapWrapper {
 
 type OrderedSquashable = Vec<(SoBox, OrderLabel)>;
 
-pub struct HelperByType<T: Squashable> {
+pub struct HelperByType<T: RemoteSend> {
     _mark: PhantomData<T>,
 }
 
 impl<T> Default for HelperByType<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn default() -> Self {
         HelperByType {
@@ -269,7 +246,7 @@ where
 
 impl<T> Clone for HelperByType<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn clone(&self) -> Self {
         Default::default()
@@ -278,7 +255,7 @@ where
 
 impl<T> SquashTypeHelper for HelperByType<T>
 where
-    T: Squashable,
+    T: RemoteSend,
 {
     fn serialize(&self, obj: &SBox) -> Vec<u8> {
         let mut ret = vec![];
@@ -291,7 +268,7 @@ where
     }
     fn deserialize(&self, bytes: Vec<u8>) -> SBox {
         // TODO use inplace deserialize to avoid copy
-        SquashedHolder::<T>::new_boxed(deserialize_from::<&[u8], T::Squashed>(&bytes[..]).unwrap())
+        SquashedHolder::<T>::new_boxed(deserialize_from::<&[u8], T::Output>(&bytes[..]).unwrap())
     }
 
     fn sort_by(&self, to_arrange: &mut Vec<(SoBox, OrderLabel)>) {
@@ -642,24 +619,24 @@ impl TaskItemExtracter {
         item.squashable.reverse(); // to have the same order as arg, reverse since pop from behind
         TaskItemExtracter { position: 0, item }
     }
-    pub fn arg<T: RemoteSend>(&mut self) -> T {
+    pub fn arg<T: NameToRemove>(&mut self) -> T {
         let mut read = &self.item.inner.args[self.position..];
         let t = deserialize_from(&mut read).expect("Failed to deserialize function argument");
         self.position =
             unsafe { read.as_ptr().offset_from(self.item.inner.args.as_ptr()) as usize };
         t
     }
-    pub fn arg_squash<T: Squashable>(&mut self) -> T {
+    pub fn arg_squash<T: RemoteSend>(&mut self) -> T {
         *downcast_squashable::<T>(self.item.squashable.pop().unwrap().0).unwrap()
     }
-    pub fn ret<T: RemoteSend>(&mut self) -> Result<T, PanicPayload> {
+    pub fn ret<T: NameToRemove>(&mut self) -> Result<T, PanicPayload> {
         let ret_info = self.item.inner.ret.take().unwrap();
         match ret_info.result {
             Ok(()) => Ok(self.arg()),
             Err(e) => Err(e),
         }
     }
-    pub fn ret_squash<T: Squashable>(&mut self) -> Result<T, PanicPayload> {
+    pub fn ret_squash<T: RemoteSend>(&mut self) -> Result<T, PanicPayload> {
         let ret_info = self.item.inner.ret.take().unwrap();
         match ret_info.result {
             Ok(()) => Ok(self.arg_squash()),
@@ -717,12 +694,12 @@ impl TaskItemBuilder {
         self.item.inner.waited = true;
     }
 
-    pub fn arg(&mut self, t: impl RemoteSend) {
+    pub fn arg(&mut self, t: impl NameToRemove) {
         serialize_into(&mut self.item.inner.args, &t)
             .expect("Failed to serialize function argument");
         self.next_label();
     }
-    pub fn arg_squash(&mut self, t: impl Squashable) {
+    pub fn arg_squash(&mut self, t: impl RemoteSend) {
         let label = self.next_label();
         self.item.squashable.push((Box::new(t), label));
     }
@@ -739,7 +716,7 @@ impl TaskItemBuilder {
             sub_activities: vec![],
         });
     }
-    pub fn ret(&mut self, result: std::thread::Result<impl RemoteSend>) {
+    pub fn ret(&mut self, result: std::thread::Result<impl NameToRemove>) {
         let result = match result {
             Ok(ret) => {
                 self.arg(ret);
@@ -749,7 +726,7 @@ impl TaskItemBuilder {
         };
         self.set_result(result);
     }
-    pub fn ret_squash(&mut self, result: std::thread::Result<impl Squashable>) {
+    pub fn ret_squash(&mut self, result: std::thread::Result<impl RemoteSend>) {
         let result = match result {
             Ok(ret) => {
                 self.arg_squash(ret);
@@ -824,7 +801,7 @@ pub mod test {
     use std::convert::TryInto;
     use std::sync::MutexGuard;
 
-    fn clone_squashable_orderlabel_list<T: Squashable + Clone>(
+    fn clone_squashable_orderlabel_list<T: RemoteSend + Clone>(
         v: &[(SoBox, OrderLabel)],
     ) -> Vec<(SoBox, OrderLabel)> {
         let cbox = |v: &(SoBox, OrderLabel)| {
@@ -835,13 +812,13 @@ pub mod test {
         v.iter().map(cbox).collect()
     }
 
-    pub fn _clone<T: Squashable + Clone>(this: &TaskItem) -> TaskItem {
+    pub fn _clone<T: RemoteSend + Clone>(this: &TaskItem) -> TaskItem {
         TaskItem {
             inner: this.inner.clone(),
             squashable: clone_squashable_orderlabel_list::<T>(&this.squashable[..]),
         }
     }
-    pub fn _eq<T: Squashable>(t: &TaskItem, i: &TaskItem) -> bool {
+    pub fn _eq<T: RemoteSend>(t: &TaskItem, i: &TaskItem) -> bool {
         let mut ret = t.inner == i.inner && t.squashable.len() == i.squashable.len();
         for index in 0..t.squashable.len() {
             ret = ret && t.squashable[index].1 == i.squashable[index].1;
@@ -920,14 +897,14 @@ pub mod test {
         diffs: Vec<usize>,
     }
 
-    impl Squashable for A {
-        type Squashed = AOut;
-        fn fold(&self, acc: &mut Self::Squashed) {
+    impl RemoteSend for A {
+        type Output = AOut;
+        fn fold(&self, acc: &mut Self::Output) {
             assert!(acc.last <= self.value);
             acc.diffs.push((self.value - acc.last).try_into().unwrap());
             acc.last = self.value;
         }
-        fn extract(out: &mut Self::Squashed) -> Option<Self> {
+        fn extract(out: &mut Self::Output) -> Option<Self> {
             out.diffs.pop().map(|x| {
                 let ret = out.last;
                 out.last = out.last - x as usize;
@@ -944,12 +921,12 @@ pub mod test {
     pub struct BOut {
         list: Vec<u8>,
     }
-    impl Squashable for B {
-        type Squashed = BOut;
-        fn fold(&self, acc: &mut Self::Squashed) {
+    impl RemoteSend for B {
+        type Output = BOut;
+        fn fold(&self, acc: &mut Self::Output) {
             acc.list.push(self.value);
         }
-        fn extract(out: &mut Self::Squashed) -> Option<Self> {
+        fn extract(out: &mut Self::Output) -> Option<Self> {
             out.list.pop().map(|value| B { value })
         }
     }
