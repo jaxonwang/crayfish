@@ -24,12 +24,11 @@ use std::sync::Mutex;
 
 extern crate serde;
 
-pub type PackedValue = Box<dyn Any + Send + 'static>;
 pub type PanicPayload = String;
 pub type FunctionLabel = u64; // function label is line
 pub type ActivityResult = std::result::Result<(), PanicPayload>;
 
-pub fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayload {
+fn cast_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PanicPayload {
     let id = (*payload).type_id();
     if id == TypeId::of::<String>() {
         *payload.downcast::<String>().unwrap()
@@ -54,7 +53,7 @@ pub fn copy_panic_payload(
 }
 
 
-pub trait SquashableObject: Any + Send + 'static {
+pub(crate) trait SquashableObject: Any + Send + 'static {
     // for downcast
     fn fold(&self, v: &mut SBox);
     fn default_squashed(&self) -> SBox;
@@ -143,7 +142,7 @@ where
 }
 
 // a magic to implment dyn T::Output where T is not allowed to be trait object
-pub trait SquashedObject: Send + Any {
+pub(crate) trait SquashedObject: Send + Any {
     fn extract(&mut self) -> Option<SoBox>;
 }
 
@@ -194,7 +193,7 @@ const ARGUMENT_ORDER_BITS: u32 = 8;
 type SoBox = Box<dyn SquashableObject + Send>;
 type SBox = Box<dyn SquashedObject + Send>;
 type SquashableMap = FxHashMap<TypeId, Vec<(SoBox, OrderLabel)>>;
-pub type SquashedMapValue = (SBox, Vec<OrderLabel>);
+type SquashedMapValue = (SBox, Vec<OrderLabel>);
 type SquashedMap = FxHashMap<TypeId, SquashedMapValue>;
 
 // to allow implement serialization for squashedmap
@@ -225,7 +224,7 @@ impl DerefMut for SquashedMapWrapper {
 
 type OrderedSquashable = Vec<(SoBox, OrderLabel)>;
 
-pub struct HelperByType<T: RemoteSend> {
+pub(crate) struct HelperByType<T: RemoteSend> {
     _mark: PhantomData<T>,
 }
 
@@ -280,7 +279,7 @@ where
     }
 }
 
-pub trait SquashTypeHelper: Send {
+pub(crate) trait SquashTypeHelper: Send {
     fn serialize(&self, obj: &SBox) -> Vec<u8>;
     fn deserialize(&self, bytes: Vec<u8>) -> SBox;
     fn sort_by(&self, arrange: &mut Vec<(SoBox, OrderLabel)>);
@@ -305,11 +304,11 @@ impl fmt::Debug for dyn SquashTypeHelper {
     }
 }
 
-pub type HelperMap = FxHashMap<TypeId, Box<dyn SquashTypeHelper + Send>>;
+pub(crate) type HelperMap = FxHashMap<TypeId, Box<dyn SquashTypeHelper + Send>>;
 
 static SQUASH_HELPERS: Lazy<Mutex<HelperMap>> = Lazy::new(|| Mutex::new(HelperMap::default()));
 
-pub fn set_helpers(helpers: HelperMap) {
+pub(crate) fn set_helpers(helpers: HelperMap) {
     let mut h = SQUASH_HELPERS.lock().unwrap();
     *h = helpers
 }
@@ -426,7 +425,7 @@ pub trait StaticSquashBufferFactory {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SquashBuffer {
+struct SquashBuffer {
     // TODO boxex
     items: Vec<StrippedTaskItem>,
     #[serde(skip)]

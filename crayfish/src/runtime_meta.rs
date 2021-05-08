@@ -2,6 +2,8 @@ use crate::activity::FunctionLabel;
 use crate::activity::TaskItem;
 use crate::activity::SquashTypeHelper;
 use crate::activity::HelperMap;
+use crate::activity::HelperByType;
+use crate::args::RemoteSend;
 use crate::activity::set_helpers;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
@@ -84,10 +86,10 @@ pub struct SquashHelperMeta{
 }
 
 impl SquashHelperMeta{
-    pub fn new(type_id:TypeId, helper: Box<dyn SquashTypeHelper + Send>) -> Self{
+    pub fn new<T:RemoteSend>() -> Self {
         SquashHelperMeta{
-            type_id,
-            helper
+            type_id: TypeId::of::<T>(),
+            helper: Box::new(HelperByType::<T>::default())
         }
     }
 }

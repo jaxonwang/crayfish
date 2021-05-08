@@ -60,11 +60,11 @@ thread_local! {
     static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
 }
 
-pub fn init_here(here: Rank) {
+pub(crate) fn init_here(here: Rank) {
     HERE_STATIC.set(here.as_i32().try_into().unwrap()).unwrap();
 }
 
-pub fn init_world_size(size: usize){
+pub(crate) fn init_world_size(size: usize){
     WORLD_SIZE_STATIC.set(size).unwrap();
 }
 
@@ -90,7 +90,7 @@ pub fn world_size() -> usize{
     })
 }
 
-pub fn my_worker_id() -> WorkerId {
+pub(crate) fn my_worker_id() -> WorkerId {
     WORKER_ID.with(|wid| {
         match wid.get() {
             Some(w_id) => w_id,
@@ -122,13 +122,13 @@ fn next_activity_local_id() -> ActivityLocalId {
     })
 }
 
-pub fn new_global_finish_id() -> FinishId {
+pub(crate) fn new_global_finish_id() -> FinishId {
     let prefix = ((here() as FinishId) << 16 | my_worker_id() as FinishId) << 32;
     prefix | next_finish_local_id() as FinishId
 }
 
 // place part of lower activity id is the place it spwan
-pub fn new_global_activity_id(fid: FinishId) -> ActivityId {
+pub(crate) fn new_global_activity_id(fid: FinishId) -> ActivityId {
     let suffix = ((here() as ActivityId) << 16 | my_worker_id() as ActivityId) << 32;
     let suffix = suffix | next_activity_local_id() as ActivityId;
     (fid as ActivityId) << 64 | suffix

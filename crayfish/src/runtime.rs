@@ -36,13 +36,13 @@ use tokio::sync::oneshot;
 extern crate futures;
 extern crate once_cell;
 
-pub fn init_worker_task_queue() {
+pub(crate) fn init_worker_task_queue() {
     let mut q = WORKER_TASK_QUEUE.lock().unwrap();
     let (task_tx, task_rx) = unbounded_channel();
     *q = (Some(task_tx), Some(task_rx));
 }
 
-pub fn init_task_item_channels() {
+pub(crate) fn init_task_item_channels() {
     let mut channels = TASK_ITEM_CHANNELS.lock().unwrap();
     channels.clear();
     for _ in 0..*meta_data::NUM_CPUS {
@@ -75,7 +75,7 @@ static NETWORK_BUFFER_CHANNEL: Lazy<Mutex<MaybeBufferChannel>> = Lazy::new(|| {
     Mutex::new((Some(tx), Some(rx)))
 });
 
-pub fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u8]) {
+pub(crate) fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u8]) {
     thread_local! { // this is hold in network thread
         static BUFFER_SENDER: Cell<Option<Sender<Box<dyn AbstractSquashBuffer>>>> = Cell::new(None);
     };
@@ -97,11 +97,11 @@ pub fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, data: &[u
 }
 
 // take the receiver from static, to init distributor
-pub fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>> {
+pub(crate) fn take_message_buffer_receiver() -> Receiver<Box<dyn AbstractSquashBuffer>> {
     NETWORK_BUFFER_CHANNEL.lock().unwrap().1.take().unwrap()
 }
 
-pub fn take_worker_task_receiver() -> UnboundedReceiver<Box<TaskItem>> {
+pub(crate) fn take_worker_task_receiver() -> UnboundedReceiver<Box<TaskItem>> {
     WORKER_TASK_QUEUE.lock().unwrap().1.take().unwrap()
 }
 
@@ -215,7 +215,7 @@ pub async fn wait_all(ctx: ConcreteContext) {
     ret.unwrap() // assert no panic here TODO: deal with panic payload
 }
 
-pub trait AbstractDistributor: Send + 'static {
+pub(crate) trait AbstractDistributor: Send + 'static {
     fn recv(&mut self) -> Option<Box<TaskItem>>;
     fn send(&mut self, item: Box<TaskItem>);
     fn poll(&mut self);
@@ -224,7 +224,7 @@ pub trait AbstractDistributor: Send + 'static {
 // I guess 1 ms is the RTT for ethernet
 const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
 // who will perfrom squash and inflate
-pub struct Distributor<S: MessageSender> {
+pub(crate) struct Distributor<S: MessageSender> {
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
     sender: S,
     receiver: Receiver<Box<dyn AbstractSquashBuffer>>,
@@ -323,7 +323,7 @@ where
 }
 
 #[derive(Debug)]
-pub struct ExecutionHub<D>
+pub(crate) struct ExecutionHub<D>
 where
     D: AbstractDistributor,
 {
@@ -340,7 +340,7 @@ where
     worker_task_queue: UnboundedSender<Box<TaskItem>>,
 }
 
-pub struct ExecutionHubTrigger {
+pub(crate) struct ExecutionHubTrigger {
     stop: Arc<AtomicBool>,
 }
 impl ExecutionHubTrigger {
