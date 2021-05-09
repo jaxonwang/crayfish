@@ -265,6 +265,11 @@ async fn inner_main() {
 
         let mut hist = vec![0usize; 2048];
         for (_, data) in global_table {
+            if data.count as usize > hist.len(){
+                for _ in 0..data.count {
+                    hist.push(0);
+                }
+            }
             hist[data.count as usize] += 1;
         }
         println!("{:?}", hist);
