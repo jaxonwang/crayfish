@@ -37,7 +37,7 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
         "warn" => log::LevelFilter::Warn,
         "error" => log::LevelFilter::Error,
         _ if cfg!(debug_assertions) => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Warn,
+        _ => log::LevelFilter::Info,
     };
     fern::Dispatch::new()
         .format(move |out, message, record| {
