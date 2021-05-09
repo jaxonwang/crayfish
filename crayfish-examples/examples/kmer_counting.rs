@@ -1,31 +1,31 @@
 use crayfish::activity::ActivityId;
 use crayfish::activity::FunctionLabel;
-use crayfish::runtime_meta::FunctionMetaData;
 use crayfish::activity::TaskItem;
 use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
+use crayfish::args::RemoteSend;
 use crayfish::essence;
-use std::io::BufReader;
-use std::io::BufRead;
-use std::fs::File;
 use crayfish::global_id;
 use crayfish::global_id::world_size;
 use crayfish::global_id::ActivityIdMethods;
+use crayfish::inventory;
 use crayfish::logging::*;
 use crayfish::place::Place;
 use crayfish::runtime::wait_all;
 use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
+use crayfish::runtime_meta::FunctionMetaData;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use std::panic::AssertUnwindSafe;
-use crayfish::args::RemoteSend;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::cmp::Ordering;
-use crayfish::inventory;
 use serde::Serialize;
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::panic::AssertUnwindSafe;
 
 extern crate crayfish;
 extern crate futures;
@@ -35,7 +35,7 @@ type CountNumber = u32;
 type KMer = Vec<u8>;
 type Reads = Vec<Vec<u8>>;
 
-const KMER_LEN:usize = 31;
+const KMER_LEN: usize = 31;
 
 const BASE_A: u8 = b'A';
 const BASE_T: u8 = b'T';
@@ -47,7 +47,7 @@ struct KMerData {
     count: CountNumber,
 }
 
-impl RemoteSend for KMerData{
+impl RemoteSend for KMerData {
     type Output = ();
     fn fold(&self, _acc: &mut Self::Output) {
         panic!()
@@ -55,7 +55,7 @@ impl RemoteSend for KMerData{
     fn extract(_out: &mut Self::Output) -> Option<Self> {
         panic!()
     }
-    fn reorder(&self, _other: &Self) -> Ordering{
+    fn reorder(&self, _other: &Self) -> Ordering {
         panic!()
     }
     fn is_squashable() -> bool {
@@ -63,11 +63,11 @@ impl RemoteSend for KMerData{
     }
 }
 
-fn merge_table(to:&mut CountTable, from: CountTable){
-    for (kmer, kmerdata) in from{
-        if to.contains_key(&kmer){
+fn merge_table(to: &mut CountTable, from: CountTable) {
+    for (kmer, kmerdata) in from {
+        if to.contains_key(&kmer) {
             to.get_mut(&kmer).unwrap().count += kmerdata.count;
-        }else{
+        } else {
             to.insert(kmer, kmerdata);
         }
     }
@@ -118,24 +118,20 @@ fn update_count_table(count_table: &mut CountTable, kmer: KMer, kmerdata: KMerDa
     };
 }
 
-async fn kmer_counting(
-    _ctx: & mut impl ApgasContext,
-    reads: Reads,
-) -> CountTable {
+async fn kmer_counting(_ctx: &mut impl ApgasContext, reads: Reads) -> CountTable {
     let mut count_table = CountTable::new();
 
-    for read in reads{
-
+    for read in reads {
         // drop too short read
         if read.len() < KMER_LEN {
-            continue
+            continue;
         }
         // drop read with unknown base
-        for b in read.iter() {
-            // illumina unknown base
-            if *b == b'N' || *b == b'.' {
-                continue
-            }
+        if read
+            .iter()
+            .any(|b| *b != BASE_A && *b != BASE_T && *b != BASE_C && *b != BASE_G)
+        {
+            continue;
         }
 
         // TODO: further optimization
@@ -163,20 +159,21 @@ async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, reads: R
 }
 
 // the one executed by worker
-fn real_fn_wrap_execute_from_remote(item: TaskItem) -> BoxFuture<'static, ()>{
-    async move{
-    let waited = item.is_waited();
-    let mut e = TaskItemExtracter::new(item);
-    let my_activity_id = e.activity_id();
+fn real_fn_wrap_execute_from_remote(item: TaskItem) -> BoxFuture<'static, ()> {
+    async move {
+        let waited = item.is_waited();
+        let mut e = TaskItemExtracter::new(item);
+        let my_activity_id = e.activity_id();
 
-    // wait until function return
-    trace!(
-        "Got activity:{} from {}",
-        my_activity_id,
-        my_activity_id.get_spawned_place()
-    );
-    execute_and_send_fn0(my_activity_id, waited, e.arg()).await; // macro
-    }.boxed()
+        // wait until function return
+        trace!(
+            "Got activity:{} from {}",
+            my_activity_id,
+            my_activity_id.get_spawned_place()
+        );
+        execute_and_send_fn0(my_activity_id, waited, e.arg()).await; // macro
+    }
+    .boxed()
 }
 
 crayfish::inventory::submit! {
@@ -217,26 +214,32 @@ async fn inner_main() {
         let mut ctx = ConcreteContext::new_frame();
         // ctx contains a new finish id now
         let mut rets = vec![];
-        let chunk_size = 1024;
+        let chunk_size = 4096;
         let args = std::env::args().collect::<Vec<_>>();
         let filename = &args[1];
         let file = File::open(filename).unwrap();
         let lines = BufReader::new(file).lines();
 
         let world_size = world_size();
-        let mut next_place:Place = 0;
-        let mut buffer:Reads = vec![];
+        let mut next_place: Place = 0;
+        let mut buffer: Reads = vec![];
 
         for (l_num, line) in lines.enumerate() {
-            if l_num % 4 != 1{
-                continue
+            if l_num % 4 != 1 {
+                continue;
             }
             if let Ok(s) = line {
-                if buffer.len() == chunk_size{
+                if buffer.len() == chunk_size {
+                    warn!(
+                        "Sending {}~{} reads to {}",
+                        l_num / 4,
+                        l_num / 4 + chunk_size - 1,
+                        next_place
+                    );
                     let mut new_read = vec![];
                     std::mem::swap(&mut new_read, &mut buffer);
                     rets.push(async_create_for_fn_id_0(ctx.spawn(), next_place, new_read));
-                    next_place = (next_place + 1 ) % (world_size as Place) ;
+                    next_place = (next_place + 1) % (world_size as Place);
                 }
                 buffer.push(s.into_bytes());
             }
@@ -244,19 +247,24 @@ async fn inner_main() {
         rets.push(async_create_for_fn_id_0(ctx.spawn(), next_place, buffer));
 
         let mut global_table = CountTable::new();
-        for ret in rets{
+        for (i, ret) in rets.into_iter().enumerate() {
             let count_table = ret.await;
+            warn!(
+                "Merging {}~{} reads count table",
+                i * chunk_size,
+                (i + 1) * chunk_size - 1
+            );
             merge_table(&mut global_table, count_table);
         }
-        
-        println!("got {} kmers", global_table.len());
+
+        warn!("got {} kmers", global_table.len());
         let p = global_table.iter().take(100).collect::<Vec<_>>();
-        for (kmer, data) in p{
+        for (kmer, data) in p {
             println!("{}: {}", String::from_utf8_lossy(&kmer[..]), data.count);
         }
 
-        let mut hist = vec![0usize;2048];
-        for (_, data) in global_table{
+        let mut hist = vec![0usize; 2048];
+        for (_, data) in global_table {
             hist[data.count as usize] += 1;
         }
         println!("{:?}", hist);
