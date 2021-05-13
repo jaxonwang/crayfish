@@ -23,4 +23,5 @@ mod prelude {
 }
 
 pub use crate::prelude::*;
+pub use crayfish_macros::*;
 

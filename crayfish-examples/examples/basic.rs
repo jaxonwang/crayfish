@@ -18,8 +18,6 @@ use crayfish::runtime_meta::SquashHelperMeta;
 use crayfish::inventory;
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use crayfish::Deserialize;
-use crayfish::Serialize;
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
@@ -27,14 +25,14 @@ use std::panic::AssertUnwindSafe;
 extern crate crayfish;
 extern crate futures;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-#[serde(crate = "crayfish::serde")]
+#[crayfish::arg_squashable]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct A {
     pub value: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(crate = "crayfish::serde")]
+#[crayfish::arg_squashed]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AOut {
     last: usize,
     diffs: Vec<usize>,
@@ -63,13 +61,13 @@ crayfish::inventory::submit! {
     SquashHelperMeta::new::<A>()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-#[serde(crate = "crayfish::serde")]
+#[crayfish::arg_squashable]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct B {
     pub value: u8,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
-#[serde(crate = "crayfish::serde")]
+#[crayfish::arg_squashed]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BOut {
     list: Vec<u8>,
 }
@@ -90,28 +88,13 @@ crayfish::inventory::submit! {
     SquashHelperMeta::new::<B>()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(crate = "crayfish::serde")]
+
+#[crayfish::arg]
+#[derive(Debug)]
 struct R {
     a: A,
     b: B,
     c: i32,
-}
-
-impl RemoteSend for R {
-    type Output = ();
-    fn fold(&self, _acc: &mut Self::Output) {
-        panic!()
-    }
-    fn extract(_out: &mut Self::Output) -> Option<Self> {
-        panic!()
-    }
-    fn reorder(&self, _other: &Self) -> Ordering {
-        panic!()
-    }
-    fn is_squashable() -> bool {
-        false
-    }
 }
 
 async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
