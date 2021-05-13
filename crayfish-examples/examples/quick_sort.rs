@@ -25,7 +25,6 @@ use std::panic::AssertUnwindSafe;
 extern crate crayfish;
 extern crate futures;
 extern crate rand;
-extern crate serde;
 
 fn quick_sort<'a>(
     ctx: &'a mut impl ApgasContext,

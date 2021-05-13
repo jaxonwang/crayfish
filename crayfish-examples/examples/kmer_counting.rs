@@ -18,8 +18,8 @@ use crayfish::runtime::ConcreteContext;
 use crayfish::runtime_meta::FunctionMetaData;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use serde::Deserialize;
-use serde::Serialize;
+use crayfish::Deserialize;
+use crayfish::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
@@ -29,7 +29,6 @@ use std::panic::AssertUnwindSafe;
 
 extern crate crayfish;
 extern crate futures;
-extern crate serde;
 
 type CountNumber = u32;
 type KMer = Vec<u8>;
@@ -43,6 +42,7 @@ const BASE_C: u8 = b'C';
 const BASE_G: u8 = b'G';
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "crayfish::serde")]
 struct KMerData {
     count: CountNumber,
 }

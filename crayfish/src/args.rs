@@ -1,7 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::any::Any;
-use std::cmp::Ordering;
 
 extern crate serde;
 
@@ -29,7 +28,7 @@ pub trait RemoteSend: Serialize + DeserializeOwned + Any + Send + 'static {
     fn extract(out: &mut Self::Output) -> Option<Self>
     where
         Self: Sized;
-    fn reorder(&self, other: &Self) -> Ordering;
+    fn reorder(&self, other: &Self) -> std::cmp::Ordering;
     fn is_squashable() -> bool {
         true
     }
@@ -41,19 +40,19 @@ impl<T> Squashed for T where T: Serialize + DeserializeOwned + Send + Default {}
 macro_rules! impl_body {
     () => {
         type Output = ();
-        fn is_squashable() -> bool {
+        fn is_squashable() -> ::std::primitive::bool {
             false
         }
         fn fold(&self, _acc: &mut Self::Output){
             panic!()
         }
-        fn extract(_out: &mut Self::Output) -> Option<Self>
+        fn extract(_out: &mut Self::Output) -> ::std::option::Option<Self>
         where
             Self: Sized
         {
             panic!()
         }
-        fn reorder(&self, _other: &Self) -> Ordering{
+        fn reorder(&self, _other: &Self) -> ::std::cmp::Ordering{
             panic!()
         }
 
