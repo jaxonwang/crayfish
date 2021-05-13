@@ -1,19 +1,25 @@
-
-use quote::quote;
+use syn::parse_macro_input;
+use syn::Item;
 use proc_macro::TokenStream;
 
+mod args;
+
 extern crate proc_macro;
-extern crate crayfish;
 
 #[proc_macro_attribute]
-pub fn crayfish(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+pub fn arg(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as Item);
+    args::impl_remote_send(args::RSendImpl::DefaultImpl, item).into()
 }
 
-#[cfg(test)]
-mod test{
+#[proc_macro_attribute]
+pub fn arg_squashable(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as Item);
+    args::impl_remote_send(args::RSendImpl::Squashable, item).into()
+}
 
-    #[test]
-    pub fn test_pkg_name(){
-    }
+#[proc_macro_attribute]
+pub fn arg_squashed(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as Item);
+    args::impl_remote_send(args::RSendImpl::Squashed, item).into()
 }

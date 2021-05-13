@@ -18,8 +18,6 @@ use crayfish::runtime::ConcreteContext;
 use crayfish::runtime_meta::FunctionMetaData;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use crayfish::Deserialize;
-use crayfish::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
@@ -41,26 +39,10 @@ const BASE_T: u8 = b'T';
 const BASE_C: u8 = b'C';
 const BASE_G: u8 = b'G';
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(crate = "crayfish::serde")]
+#[crayfish::arg]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct KMerData {
     count: CountNumber,
-}
-
-impl RemoteSend for KMerData {
-    type Output = ();
-    fn fold(&self, _acc: &mut Self::Output) {
-        panic!()
-    }
-    fn extract(_out: &mut Self::Output) -> Option<Self> {
-        panic!()
-    }
-    fn reorder(&self, _other: &Self) -> Ordering {
-        panic!()
-    }
-    fn is_squashable() -> bool {
-        false
-    }
 }
 
 fn merge_table(to: &mut CountTable, from: CountTable) {
