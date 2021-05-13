@@ -17,6 +17,10 @@ mod prelude {
     pub use crate::executor::spawn;
     pub use crate::executor::runtime;
     pub use crate::runtime_meta::inventory;
+    pub use crate::serialization::serde;
+    pub use crate::serialization::Serialize;
+    pub use crate::serialization::Deserialize;
 }
 
 pub use crate::prelude::*;
+

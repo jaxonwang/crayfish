@@ -18,22 +18,23 @@ use crayfish::runtime_meta::SquashHelperMeta;
 use crayfish::inventory;
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use serde::Deserialize;
-use serde::Serialize;
+use crayfish::Deserialize;
+use crayfish::Serialize;
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::panic::AssertUnwindSafe;
 
 extern crate crayfish;
 extern crate futures;
-extern crate serde;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[serde(crate = "crayfish::serde")]
 pub struct A {
     pub value: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(crate = "crayfish::serde")]
 pub struct AOut {
     last: usize,
     diffs: Vec<usize>,
@@ -63,10 +64,12 @@ crayfish::inventory::submit! {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[serde(crate = "crayfish::serde")]
 pub struct B {
     pub value: u8,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(crate = "crayfish::serde")]
 pub struct BOut {
     list: Vec<u8>,
 }
@@ -88,6 +91,7 @@ crayfish::inventory::submit! {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(crate = "crayfish::serde")]
 struct R {
     a: A,
     b: B,
