@@ -7,6 +7,11 @@ struct Foo{
     p: usize,
 }
 
+// #[arg]
+// struct Quz<'a, T> where T:RemoteSend + crayfish::Deserialize<'a>{
+//     p: usize,
+//     t: T
+// }
 
 #[arg_squashed]
 #[derive(Default)]

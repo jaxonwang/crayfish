@@ -5,4 +5,5 @@ pub use bincode::deserialize_from;
 
 pub extern crate serde;
 pub use serde::Deserialize;
+pub use serde::de::DeserializeOwned;
 pub use serde::Serialize;
