@@ -1,8 +1,6 @@
 use crayfish_macros::*;
 
 #[arg]
-mod foo{
-}
+mod foo {}
 
-pub fn main() {
-}
+pub fn main() {}

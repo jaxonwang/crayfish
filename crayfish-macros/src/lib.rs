@@ -1,6 +1,6 @@
+use proc_macro::TokenStream;
 use syn::parse_macro_input;
 use syn::Item;
-use proc_macro::TokenStream;
 
 mod args;
 
