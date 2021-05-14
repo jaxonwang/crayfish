@@ -9,7 +9,7 @@ struct Quz<T> {
 #[arg_squashed]
 struct Quzz<T>
 where
-    T: Copy,
+    T: Copy
 {
     p: usize,
     t: T,

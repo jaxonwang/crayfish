@@ -64,7 +64,11 @@ pub fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
         })
         .collect();
     let where_clause = match where_clause {
-        Some(w) => Some(quote!(#w, #(#ty_generices_with_bound), *)),
+        Some(w) => {
+            // remove the last comma in where clause
+            let predicates = w.predicates.iter();
+            Some(quote!(where #(#predicates),* , #(#ty_generices_with_bound), *))
+        },
         None => {
             if ty_generices_with_bound.is_empty() {
                 None
@@ -86,16 +90,16 @@ pub fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
                 false
             }
             fn fold(&self, _acc: &mut Self::Output){
-                panic!()
+                unreachable!()
             }
             fn extract(_out: &mut Self::Output) -> ::std::option::Option<Self>
             where
                 Self: Sized
             {
-                panic!()
+                unreachable!()
             }
             fn reorder(&self, _other: &Self) -> ::std::cmp::Ordering{
-                panic!()
+                unreachable!()
             }
         }
     };
