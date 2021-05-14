@@ -20,6 +20,7 @@ mod prelude {
     pub use crate::serialization::serde;
     pub use crate::serialization::Serialize;
     pub use crate::serialization::Deserialize;
+    pub use crate::serialization::DeserializeOwned;
 }
 
 pub use crate::prelude::*;

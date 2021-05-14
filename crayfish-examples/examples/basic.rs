@@ -14,7 +14,6 @@ use crayfish::runtime::wait_single;
 use crayfish::runtime::ApgasContext;
 use crayfish::runtime::ConcreteContext;
 use crayfish::runtime_meta::FunctionMetaData;
-use crayfish::runtime_meta::SquashHelperMeta;
 use crayfish::inventory;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -57,10 +56,6 @@ impl RemoteSend for A {
     }
 }
 
-crayfish::inventory::submit! {
-    SquashHelperMeta::new::<A>()
-}
-
 #[crayfish::arg_squashable]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct B {
@@ -83,11 +78,6 @@ impl RemoteSend for B {
         self.cmp(other)
     }
 }
-
-crayfish::inventory::submit! {
-    SquashHelperMeta::new::<B>()
-}
-
 
 #[crayfish::arg]
 #[derive(Debug)]
