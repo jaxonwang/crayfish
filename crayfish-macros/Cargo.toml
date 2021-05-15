@@ -20,3 +20,4 @@ proc-macro2 = "1.0.26"
 [dev-dependencies]
 trybuild = "1.0"
 crayfish = { path = "../crayfish", version = "0.1.0"}
+futures = "0.3"
