@@ -3,6 +3,7 @@ use syn::parse_macro_input;
 use syn::Item;
 
 mod args;
+mod func;
 
 extern crate proc_macro;
 
@@ -22,4 +23,10 @@ pub fn arg_squashable(_args: TokenStream, item: TokenStream) -> TokenStream {
 pub fn arg_squashed(_args: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as Item);
     args::impl_remote_send(args::RSendImpl::Squashed, item).into()
+}
+
+#[proc_macro_attribute]
+pub fn activity(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as Item);
+    func::expand_async_func(item).unwrap_or_else(|e|e.to_compile_error()).into()
 }

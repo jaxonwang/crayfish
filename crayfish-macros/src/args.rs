@@ -3,13 +3,13 @@ use quote::quote;
 use syn::GenericParam;
 use syn::Item;
 
-pub enum RSendImpl {
+pub(crate) enum RSendImpl {
     Squashed,
     Squashable,
     DefaultImpl,
 }
 
-pub fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
+pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
     // let
     // TODO: support re-export crayfish
     let crayfish_path: TokenStream = "::crayfish".parse().unwrap();
