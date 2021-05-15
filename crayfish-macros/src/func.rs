@@ -1,11 +1,17 @@
+use crate::attr::Attributes;
 use proc_macro2::TokenStream;
 use quote::quote;
+use quote::ToTokens;
+use std::fmt::Display;
+use syn::parse::Parser;
+use syn::punctuated::Punctuated;
 use syn::Error;
+use syn::Expr;
 use syn::Item;
 use syn::ItemFn;
 use syn::Result;
+use syn::Token;
 use syn::Type;
-use crate::attr::Attributes;
 
 #[allow(unused_macros)]
 macro_rules! ugly_prefix {
@@ -15,11 +21,24 @@ macro_rules! ugly_prefix {
 }
 
 fn prepend_ugly_prefix(suffix: &str) -> TokenStream {
-    let ident: TokenStream = format!("__crayfish_macro_helper_function__{}", suffix)
+    let ident: TokenStream = format!("__crayfish_d81432540815a7cb_{}", suffix)
         .parse()
         .unwrap();
     quote!(#ident)
 }
+
+fn context_arg_name() -> TokenStream {
+    prepend_ugly_prefix("arg_ctx")
+}
+
+fn at_async_fn_name(fn_name: &TokenStream) -> TokenStream {
+    prepend_ugly_prefix(&format!("at_async_{}", fn_name))
+}
+
+fn at_ff_fn_name(fn_name: &TokenStream) -> TokenStream {
+    prepend_ugly_prefix(&format!("at_ff_{}", fn_name))
+}
+
 struct HelperFunctionsGenerator {
     crayfish_path: TokenStream,
     fn_id: TokenStream,
@@ -95,14 +114,6 @@ impl HelperFunctionsGenerator {
             .collect()
     }
 
-    fn at_async_fn_name(&self) -> TokenStream {
-        prepend_ugly_prefix(&format!("at_async_{}", self.fn_name))
-    }
-
-    fn at_ff_fn_name(&self) -> TokenStream {
-        prepend_ugly_prefix(&format!("at_ff_{}", self.fn_name))
-    }
-
     fn handler_fn_name(&self) -> TokenStream {
         prepend_ugly_prefix(&format!("handler_{}", self.fn_name))
     }
@@ -114,7 +125,7 @@ impl HelperFunctionsGenerator {
     fn gen_at_ff(&self) -> TokenStream {
         let crayfish_path = &self.crayfish_path;
         let fn_id = &self.fn_id;
-        let at_ff_fn_name = self.at_ff_fn_name();
+        let at_ff_fn_name = at_ff_fn_name(&self.fn_name);
         let execute_fn_name = self.execute_fn_name();
         let punctuated_params = self.punctuated_params();
         let param_ident_list = self.param_ident_list();
@@ -147,7 +158,7 @@ impl HelperFunctionsGenerator {
         let crayfish_path = &self.crayfish_path;
         let fn_id = &self.fn_id;
         let ret_type = &self.ret_type;
-        let at_async_fn_name = self.at_async_fn_name();
+        let at_async_fn_name = at_async_fn_name(&self.fn_name);
         let execute_fn_name = self.execute_fn_name();
         let punctuated_params = self.punctuated_params();
         let param_ident_list = self.param_ident_list();
@@ -209,7 +220,8 @@ impl HelperFunctionsGenerator {
         let handler_fn_name = self.handler_fn_name();
         let execute_fn_name = self.execute_fn_name();
 
-        let extract_args = self.params
+        let extract_args = self
+            .params
             .iter()
             .map(|_| "e.arg()".parse::<TokenStream>().unwrap());
 
@@ -254,12 +266,11 @@ impl HelperFunctionsGenerator {
 fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream> {
     // TODO: support re-export crayfish
     //
-    
-    let crayfish_path: TokenStream = 
-        match attrs.crayfish_path{
-            Some(p) => quote!(#p),
-            None => "::crayfish".parse().unwrap()
-        };
+
+    let crayfish_path: TokenStream = match attrs.crayfish_path {
+        Some(p) => quote!(#p),
+        None => "::crayfish".parse().unwrap(),
+    };
     let gen = HelperFunctionsGenerator::new(&function, &crayfish_path);
 
     let execute_fn = gen.gen_execute();
@@ -268,7 +279,8 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
     let at_ff_fn = gen.gen_at_ff();
 
     // insert context
-    let arg_token = quote!(ctx: &mut impl #crayfish_path::runtime::ApgasContext);
+    let context_arg_name = context_arg_name();
+    let arg_token = quote!(#context_arg_name: &mut impl #crayfish_path::runtime::ApgasContext);
     let context_arg: syn::FnArg = syn::parse2(arg_token)?;
     let mut function = function;
     function.sig.inputs.insert(0, context_arg);
@@ -336,4 +348,66 @@ fn fn_hash(
     let s = quote! { #fn_name #file #line #path }.to_string();
     hasher.write(s.as_bytes());
     hasher.finish()
+}
+
+fn err(tokens: impl ToTokens, message: impl Display) -> syn::Result<TokenStream> {
+    Err(Error::new_spanned(tokens, message))
+}
+
+pub fn expand_at(input: proc_macro::TokenStream) -> Result<TokenStream> {
+    let parser = Punctuated::<Expr, Token![,]>::parse_separated_nonempty;
+    let args = parser.parse(input)?;
+
+    let mut args = args;
+    if args.len() != 2 {
+        err(
+            &args,
+            format!(
+                "this macro takes 2 argument but {} arguments were supplied",
+                args.len()
+            ),
+        )?;
+    }
+    let call = args.pop().unwrap().into_value();
+    let (async_func_name, call_args) =
+        match call {
+            Expr::Call(syn::ExprCall {
+                attrs,
+                func,
+                args,
+                ..
+            }) => {
+                if !attrs.is_empty() {
+                    err(&attrs[0], "doesn't suport attribute(s) here")?;
+                }
+                let func_name;
+                match *func {
+                    Expr::Path(p) => {
+                        let mut p = p;
+                        let mut last = p.path.segments.pop().unwrap().into_value();
+                        if !last.arguments.is_empty() {
+                            err(&last, "doesn't support generic function")?;
+                        }
+                        let last_ident = &last.ident;
+                        let last_ident_str = at_async_fn_name(&quote!(#last_ident)).to_string();
+                        last.ident = syn::Ident::new(last_ident_str.as_str(), last.ident.span());
+                        p.path.segments.push(last);
+                        func_name = p
+                    }
+                    thing => return err(thing, "must be a proper function name"),
+                };
+                (func_name, args)
+            }
+            Expr::MethodCall(_) => return err(&call, "haven't support method call yet."),
+            _ => return err(
+                &call,
+                "the second argument must be call-like expression: \"func_name(arg0, arg1, ..)\"",
+            ),
+        };
+
+    let place = args.pop();
+    let context_arg_name = context_arg_name();
+
+    let ret = quote! {#async_func_name(#context_arg_name.spawn(), #place #call_args)};
+    Ok(ret)
 }
