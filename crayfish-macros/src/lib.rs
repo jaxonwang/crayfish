@@ -31,11 +31,20 @@ fn _activity(args: AttributeArgs, item: Item) -> syn::Result<proc_macro2::TokenS
     let attrs = attr::Attributes::new(args)?;
     func::expand_async_func(attrs, item)
 }
+
 #[proc_macro_attribute]
 pub fn activity(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
     let item = parse_macro_input!(item as Item);
     _activity(args, item)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// at!(place, func(a, b, c, d));
+#[proc_macro]
+pub fn at(input: TokenStream) -> TokenStream {
+    func::expand_at(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
