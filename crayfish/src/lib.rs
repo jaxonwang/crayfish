@@ -21,6 +21,9 @@ mod prelude {
     pub use crate::serialization::Serialize;
     pub use crate::serialization::Deserialize;
     pub use crate::serialization::DeserializeOwned;
+
+    // re export
+    pub use futures;
 }
 
 pub use crate::prelude::*;

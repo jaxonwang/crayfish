@@ -1,0 +1,113 @@
+use crayfish::essence;
+use crayfish::global_id::Place;
+use crayfish::runtime::wait_all;
+use crayfish::runtime::ApgasContext;
+use crayfish::runtime::ConcreteContext;
+use crayfish::args::RemoteSend;
+use crayfish::global_id;
+use crayfish::logging::*;
+use std::cmp::Ordering;
+use std::convert::TryInto;
+
+extern crate crayfish;
+
+#[crayfish::arg_squashable]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct A {
+    pub value: usize,
+}
+
+#[crayfish::arg_squashed]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AOut {
+    last: usize,
+    diffs: Vec<usize>,
+}
+
+impl RemoteSend for A {
+    type Output = AOut;
+    fn fold(&self, acc: &mut Self::Output) {
+        assert!(acc.last <= self.value);
+        acc.diffs.push((self.value - acc.last).try_into().unwrap());
+        acc.last = self.value;
+    }
+    fn extract(out: &mut Self::Output) -> Option<Self> {
+        out.diffs.pop().map(|x| {
+            let ret = out.last;
+            out.last = out.last - x as usize;
+            A { value: ret }
+        })
+    }
+    fn reorder(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+#[crayfish::arg_squashable]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct B {
+    pub value: u8,
+}
+#[crayfish::arg_squashed]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BOut {
+    list: Vec<u8>,
+}
+impl RemoteSend for B {
+    type Output = BOut;
+    fn fold(&self, acc: &mut Self::Output) {
+        acc.list.push(self.value);
+    }
+    fn extract(out: &mut Self::Output) -> Option<Self> {
+        out.list.pop().map(|value| B { value })
+    }
+    fn reorder(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+#[crayfish::arg]
+#[derive(Debug)]
+struct R {
+    a: A,
+    b: B,
+    c: i32,
+}
+
+#[crayfish::activity]
+async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
+    // macro
+    debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
+    if c < 200 {
+        let here = global_id::here();
+        let world_size = global_id::world_size();
+        let dst_place = ((here + 1) as usize % world_size) as Place;
+        __crayfish_macro_helper_function__at_ff_real_fn(ctx.spawn(), dst_place, a.clone(), b.clone(), c + 1);
+    }
+    R { a, b, c: c + 1 }
+}
+
+// desugered finish
+async fn finish() {
+    if global_id::here() == 0 {
+        let mut ctx = ConcreteContext::new_frame();
+        // ctx contains a new finish id now
+        //
+        let here = global_id::here();
+        let world_size = global_id::world_size();
+        let dst_place = ((here + 1) as usize % world_size) as Place;
+        // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
+        //
+        // debug!("waiting return of the function");
+        // let ret = f.await; // if await, remove it from activity list this finish block will wait
+        // debug!("got return value {:?}", ret);
+        __crayfish_macro_helper_function__at_ff_real_fn(ctx.spawn(), dst_place, A { value: 2 }, B { value: 3 }, 1);
+
+        wait_all(ctx).await;
+        info!("Main finished")
+    }
+}
+
+pub fn main() {
+    essence::genesis(finish());
+}
