@@ -44,7 +44,15 @@ pub fn activity(args: TokenStream, item: TokenStream) -> TokenStream {
 /// at!(place, func(a, b, c, d));
 #[proc_macro]
 pub fn at(input: TokenStream) -> TokenStream {
-    func::expand_at(input)
+    func::expand_at(input, func::SpawnMethod::At)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// ff!(place, func(a, b, c, d));
+#[proc_macro]
+pub fn ff(input: TokenStream) -> TokenStream {
+    func::expand_at(input, func::SpawnMethod::FireAndForget)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
