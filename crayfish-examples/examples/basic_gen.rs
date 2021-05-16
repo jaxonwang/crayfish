@@ -1,8 +1,5 @@
 use crayfish::essence;
 use crayfish::global_id::Place;
-use crayfish::runtime::wait_all;
-use crayfish::runtime::ApgasContext;
-use crayfish::runtime::ConcreteContext;
 use crayfish::args::RemoteSend;
 use crayfish::global_id;
 use crayfish::logging::*;
@@ -75,22 +72,22 @@ struct R {
 }
 
 #[crayfish::activity]
-async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
+async fn real_fn(a: A, b: B, c: i32) -> R {
     // macro
     debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
     if c < 200 {
         let here = global_id::here();
         let world_size = global_id::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
-        __crayfish_macro_helper_function__at_ff_real_fn(ctx.spawn(), dst_place, a.clone(), b.clone(), c + 1);
+        crayfish::ff!(dst_place, real_fn(a.clone(), b.clone(), c + 1));
     }
     R { a, b, c: c + 1 }
 }
 
 // desugered finish
 async fn finish() {
+    crayfish::finish!{
     if global_id::here() == 0 {
-        let mut ctx = ConcreteContext::new_frame();
         // ctx contains a new finish id now
         //
         let here = global_id::here();
@@ -101,10 +98,10 @@ async fn finish() {
         // debug!("waiting return of the function");
         // let ret = f.await; // if await, remove it from activity list this finish block will wait
         // debug!("got return value {:?}", ret);
-        __crayfish_macro_helper_function__at_ff_real_fn(ctx.spawn(), dst_place, A { value: 2 }, B { value: 3 }, 1);
+        crayfish::ff!(dst_place, real_fn(A { value: 2 }, B { value: 3 }, 1));
 
-        wait_all(ctx).await;
         info!("Main finished")
+    }
     }
 }
 

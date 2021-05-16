@@ -1,9 +1,10 @@
 use crate::attr::Attributes;
+use crate::utils::err;
 use proc_macro2::TokenStream;
+use proc_macro2::TokenTree;
 use quote::quote;
-use quote::ToTokens;
-use std::fmt::Display;
 use syn::punctuated::Punctuated;
+use syn::AttributeArgs;
 use syn::Error;
 use syn::Expr;
 use syn::Item;
@@ -11,10 +12,6 @@ use syn::ItemFn;
 use syn::Result;
 use syn::Token;
 use syn::Type;
-
-fn err(tokens: impl ToTokens, message: impl Display) -> syn::Result<TokenStream> {
-    Err(Error::new_spanned(tokens, message))
-}
 
 #[allow(unused_macros)]
 macro_rules! ugly_prefix {
@@ -140,9 +137,9 @@ impl HelperFunctionsGenerator {
             .to_string()
             .parse()
             .unwrap();
-        let ret_type: TokenStream = match &attrs.ret_type{
+        let ret_type: TokenStream = match &attrs.ret_type {
             Some(t) => quote!(#t),
-            None => Self::infer_ret(&function)?
+            None => Self::infer_ret(&function)?,
         };
 
         // first param is impl Context
@@ -331,17 +328,13 @@ impl HelperFunctionsGenerator {
 
         }
     }
-
 }
 
 fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream> {
     // TODO: support re-export crayfish
     //
 
-    let crayfish_path: TokenStream = match &attrs.crayfish_path {
-        Some(p) => quote!(#p),
-        None => "::crayfish".parse().unwrap(),
-    };
+    let crayfish_path: TokenStream = attrs.get_path();
     let gen = HelperFunctionsGenerator::new(&function, &crayfish_path, &attrs)?;
 
     let execute_fn = gen.gen_execute();
@@ -351,7 +344,7 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
 
     let mut function = function;
     // modify fn
-    let ItemFn{
+    let ItemFn {
         ref mut sig,
         ref mut block,
         ..
@@ -361,19 +354,22 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
     let arg_token;
 
     // change to boxed
-    if sig.asyncness.is_some(){
+    if sig.asyncness.is_some() {
         sig.asyncness = None;
         let ret_type = &gen.ret_type;
-        sig.output = syn::parse2(quote!( -> #crayfish_path::futures::future::BoxFuture<'cfctxlt, #ret_type> ))?;
-        arg_token = quote!(#context_arg_name: &'cfctxlt mut impl #crayfish_path::runtime::ApgasContext);
+        sig.output = syn::parse2(
+            quote!( -> #crayfish_path::futures::future::BoxFuture<'cfctxlt, #ret_type> ),
+        )?;
+        arg_token =
+            quote!(#context_arg_name: &'cfctxlt mut impl #crayfish_path::runtime::ApgasContext);
         sig.generics = syn::parse2(quote!(<'cfctxlt>))?;
-        *block = Box::new(syn::parse2(quote!{
+        *block = Box::new(syn::parse2(quote! {
             {
                 use #crayfish_path::futures::FutureExt;
-                async move #block .boxed() 
+                async move #block .boxed()
             }
         })?)
-    }else{
+    } else {
         arg_token = quote!(#context_arg_name: &mut impl #crayfish_path::runtime::ApgasContext);
     }
 
@@ -513,5 +509,42 @@ pub fn expand_at(input: proc_macro::TokenStream, spawn: SpawnMethod) -> Result<T
     let context_arg_name = context_arg_name();
 
     let ret = quote! {#async_func_name(#context_arg_name.spawn(), #place #call_args)};
+    Ok(ret)
+}
+
+pub fn finish(args: Option<AttributeArgs>, input: proc_macro::TokenStream) -> Result<TokenStream> {
+    let attrs = match args {
+        Some(args) => Attributes::new(args)?,
+        None => Attributes::default(),
+    };
+
+    let block = TokenStream::from(input);
+
+    // error if return inside finish block
+    for tree in block.clone().into_iter(){
+        match tree{
+            TokenTree::Ident(id) => {
+                if &id.to_string() == "return"{
+                    return err(id, "returning from finish blocks is not allowed until the async closure become stable in Rust")
+                }
+            }
+            _ => ()
+        }
+    }
+
+    let crayfish_path = attrs.get_path();
+    let context_arg_name = context_arg_name();
+
+    let ret = quote! {
+        {
+        use crayfish::runtime::ApgasContext;
+        let mut #context_arg_name = #crayfish_path::runtime::ConcreteContext::new_frame();
+        let _block_ret = {
+            #block
+        };
+        #crayfish_path::runtime::wait_all(#context_arg_name).await;
+        _block_ret
+        }
+    };
     Ok(ret)
 }

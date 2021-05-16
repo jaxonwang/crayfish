@@ -4,7 +4,6 @@ use std::any::Any;
 
 extern crate serde;
 
-
 // Squashable is for large size type. Small size type should be wrapped in a largger one
 //
 // Reason 1: I attach each squashable a order label to indicate the original order for the
@@ -43,26 +42,25 @@ macro_rules! impl_body {
         fn is_squashable() -> ::std::primitive::bool {
             false
         }
-        fn fold(&self, _acc: &mut Self::Output){
+        fn fold(&self, _acc: &mut Self::Output) {
             panic!()
         }
         fn extract(_out: &mut Self::Output) -> ::std::option::Option<Self>
         where
-            Self: Sized
+            Self: Sized,
         {
             panic!()
         }
-        fn reorder(&self, _other: &Self) -> ::std::cmp::Ordering{
+        fn reorder(&self, _other: &Self) -> ::std::cmp::Ordering {
             panic!()
         }
-
-    }
+    };
 }
 
 macro_rules! impl_type {
     ($type_name:ty) => {
         impl RemoteSend for $type_name {
-            impl_body!{}
+            impl_body! {}
         }
     };
 }
@@ -120,78 +118,82 @@ macro_rules! impl_tuples{
     }
 }
 
-impl_tuples!{ T0,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15 }
+impl_tuples! { T0,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15 }
 
 use std::collections::*;
 use std::ffi::*;
-use std::num::*;
-use std::time::*;
+use std::hash::*;
+use std::marker::PhantomData;
 use std::net::*;
+use std::num::*;
+use std::ops::*;
 use std::path::*;
 use std::sync::atomic::*;
-use std::marker::PhantomData;
-use std::hash::*;
-use std::ops::*;
+use std::time::*;
 
 impl<T: ?Sized + Send + 'static> RemoteSend for PhantomData<T> {
-    impl_body!{}
+    impl_body! {}
 }
 
 impl<T, H> RemoteSend for HashSet<T, H>
-    where T:RemoteSend + Eq + Hash,
-    H: BuildHasher + Send + 'static + Default // TODO: Why compiler ask that to be default?
+where
+    T: RemoteSend + Eq + Hash,
+    H: BuildHasher + Send + 'static + Default, // TODO: Why compiler ask that to be default?
 {
-    impl_body!{}
+    impl_body! {}
 }
 
 impl<K, V, H> RemoteSend for HashMap<K, V, H>
-    where K:RemoteSend + Eq + Hash,
+where
+    K: RemoteSend + Eq + Hash,
     V: RemoteSend,
-    H: BuildHasher + Send + 'static + Default // TODO: Why compiler ask that to be default?
+    H: BuildHasher + Send + 'static + Default, // TODO: Why compiler ask that to be default?
 {
-    impl_body!{}
+    impl_body! {}
 }
 
 impl<K, V> RemoteSend for BTreeMap<K, V>
-    where K:RemoteSend + Ord,
-          V:RemoteSend
+where
+    K: RemoteSend + Ord,
+    V: RemoteSend,
 {
-    impl_body!{}
+    impl_body! {}
 }
 
 impl<T, E> RemoteSend for Result<T, E>
-where T: RemoteSend,
-      E:RemoteSend
+where
+    T: RemoteSend,
+    E: RemoteSend,
 {
-    impl_body!{}
+    impl_body! {}
 }
 
 // TODO: add test cases
-impl_generic_type!{Vec<T>}
-impl_generic_type!{Option<T>}
-impl_generic_type!{BinaryHeap<T: Ord>}
-impl_generic_type!{BTreeSet<T: Ord>}
-impl_generic_type!{LinkedList<T>}
-impl_generic_type!{VecDeque<T>}
-impl_generic_type!{Range<T>}
-impl_generic_type!{RangeInclusive<T>}
-impl_generic_type!{Bound<T>}
-impl_generic_type!{Box<T>}
+impl_generic_type! {Vec<T>}
+impl_generic_type! {Option<T>}
+impl_generic_type! {BinaryHeap<T: Ord>}
+impl_generic_type! {BTreeSet<T: Ord>}
+impl_generic_type! {LinkedList<T>}
+impl_generic_type! {VecDeque<T>}
+impl_generic_type! {Range<T>}
+impl_generic_type! {RangeInclusive<T>}
+impl_generic_type! {Bound<T>}
+impl_generic_type! {Box<T>}
 // NOTE: Currently not support ref count
 
 use std::cell::Cell;
 use std::cell::RefCell;
-impl_generic_type!{Cell<T:Copy>}
-impl_generic_type!{RefCell<T>}
+impl_generic_type! {Cell<T:Copy>}
+impl_generic_type! {RefCell<T>}
 
 use std::sync::Mutex;
 use std::sync::RwLock;
-impl_generic_type!{Mutex<T>}
-impl_generic_type!{RwLock<T>}
+impl_generic_type! {Mutex<T>}
+impl_generic_type! {RwLock<T>}
 
-impl_generic_type!{Wrapping<T>}
+impl_generic_type! {Wrapping<T>}
 use std::cmp::Reverse;
-impl_generic_type!{Reverse<T>}
+impl_generic_type! {Reverse<T>}
 
 impl_arrays! {
     01 02 03 04 05 06 07 08 09 10
@@ -200,16 +202,16 @@ impl_arrays! {
     31 32
 }
 
-impl_types! { 
-    () bool 
+impl_types! {
+    () bool
     isize i8 i16 i32 i64 i128
     usize u8 u16 u32 u64 u128
     f32 f64 char
-    String 
+    String
     CString OsString
     NonZeroU8 NonZeroU16 NonZeroU32 NonZeroU64 NonZeroU128 NonZeroUsize
     NonZeroI8 NonZeroI16 NonZeroI32 NonZeroI64 NonZeroI128 NonZeroIsize
-    Duration SystemTime 
+    Duration SystemTime
     IpAddr Ipv4Addr Ipv6Addr SocketAddr SocketAddrV4 SocketAddrV6
     PathBuf
     AtomicBool

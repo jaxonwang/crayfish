@@ -4,7 +4,6 @@ use syn::GenericParam;
 use syn::Item;
 use syn::AttributeArgs;
 use crate::attr::Attributes;
-use crate::utils::err;
 
 pub(crate) enum RSendImpl {
     Squashed,
@@ -12,8 +11,7 @@ pub(crate) enum RSendImpl {
     DefaultImpl,
 }
 
-pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: Item) -> syn::Result<TokenStream> {
-    let attrs = Attributes::new(args)?;
+pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item, args: AttributeArgs) -> TokenStream {
     let crayfish_path: TokenStream = attrs.get_path();
     let remote_send_trait: TokenStream = quote!(#crayfish_path::args::RemoteSend);
 
@@ -44,8 +42,10 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
             } = s;
             (ident, generics)
         }
-        thing => {
-            return err(thing, "attributes only applys to struct, enum.")
+        _ => {
+            return quote! {
+                compile_error!{"attributes only applys to struct, enum."}
+            }
         }
     };
 
@@ -108,9 +108,11 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
     match arg_type {
         RSendImpl::Squashable => {
             if !generics.params.is_empty() {
-                return err(&generics,"current version doesn't support generics for squashable type." )
+                return quote! {
+                    compile_error!{"current version doesn't support generics for squashable type."}
+                };
             }
-            return Ok(quote! {
+            return quote! {
                 #out_item
                 #[doc(hidden)]
                 #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
@@ -120,13 +122,13 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
                         #crayfish_path::runtime_meta::SquashHelperMeta::new::<#name>()
                     };
                 };
-            });
+            };
         }
         _ => (),
     }
 
-    Ok(quote! {
+    quote! {
         #out_item
         #rsend_impl
-    })
+    }
 }

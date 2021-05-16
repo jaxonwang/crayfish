@@ -6,25 +6,35 @@ use syn::Item;
 mod args;
 mod attr;
 mod func;
+mod utils;
 
 extern crate proc_macro;
 
 #[proc_macro_attribute]
-pub fn arg(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn arg(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
     let item = parse_macro_input!(item as Item);
-    args::impl_remote_send(args::RSendImpl::DefaultImpl, item).into()
+    args::impl_remote_send(args::RSendImpl::DefaultImpl, args, item)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
 }
 
 #[proc_macro_attribute]
-pub fn arg_squashable(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn arg_squashable(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
     let item = parse_macro_input!(item as Item);
-    args::impl_remote_send(args::RSendImpl::Squashable, item).into()
+    args::impl_remote_send(args::RSendImpl::Squashable, args, item)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
 }
 
 #[proc_macro_attribute]
-pub fn arg_squashed(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn arg_squashed(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
     let item = parse_macro_input!(item as Item);
-    args::impl_remote_send(args::RSendImpl::Squashed, item).into()
+    args::impl_remote_send(args::RSendImpl::Squashed, args, item)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
 }
 
 fn _activity(args: AttributeArgs, item: Item) -> syn::Result<proc_macro2::TokenStream> {
@@ -53,6 +63,21 @@ pub fn at(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn ff(input: TokenStream) -> TokenStream {
     func::expand_at(input, func::SpawnMethod::FireAndForget)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[proc_macro_attribute]
+pub fn finish_attr(args: TokenStream, input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
+    func::finish(Some(args), input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[proc_macro]
+pub fn finish(input: TokenStream) -> TokenStream {
+    func::finish(None, input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
