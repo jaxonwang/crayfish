@@ -1,5 +1,6 @@
 use crayfish_macros::*;
 
+use futures::Future;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 
@@ -19,6 +20,7 @@ async fn bar(a: i32, b: i64, c: Vec<usize>, d: String) -> i32 {
 #[activity]
 #[allow(unused_variables)]
 async fn foo(a: i32, b: i64, c: Vec<usize>, d: String) -> i32 {
+    let ret = ff!(crayfish::global_id::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
     let ret = at!(crayfish::global_id::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
     ret.await
 }
@@ -31,11 +33,23 @@ mod inside{
         123
     }
 }
-//
+
 // #[activity]
 // #[allow(unused_variables)]
-// fn bar(ctx: &mut impl ApgasContext, a: i32, b: i64, c: Vec<usize>, d: String) -> BoxFuture<'static, usize>{
+// fn bar_box(a: i32, b: i64, c: Vec<usize>, d: String) -> BoxFuture<'static, usize>{
 //     async move{
-//         123
+//         if a == 0 {
+//             123
+//         }else{
+//             at!(crayfish::global_id::here(), bar_impl(a-1)).await
+//         }
 //     }.boxed()
 // }
+
+#[activity]
+#[allow(unused_variables)]
+fn bar_impl(a: i32) -> impl Future<Output=usize>{
+    async move{
+        123
+    }.boxed()
+}

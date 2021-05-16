@@ -3,7 +3,6 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use quote::ToTokens;
 use std::fmt::Display;
-use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::Error;
 use syn::Expr;
@@ -12,6 +11,10 @@ use syn::ItemFn;
 use syn::Result;
 use syn::Token;
 use syn::Type;
+
+fn err(tokens: impl ToTokens, message: impl Display) -> syn::Result<TokenStream> {
+    Err(Error::new_spanned(tokens, message))
+}
 
 #[allow(unused_macros)]
 macro_rules! ugly_prefix {
@@ -48,17 +51,84 @@ struct HelperFunctionsGenerator {
 }
 
 impl HelperFunctionsGenerator {
-    fn new(function: &ItemFn, crayfish_path: &TokenStream) -> Self {
+    fn infer_ret_by_future(ret_ty: &Type) -> Result<TokenStream> {
+        const INFER_ERR_MSG: &str =
+            "can not infer return type. Please set attribute: #[activity(ret = \"Type\")]";
+
+        let ret = match ret_ty {
+            syn::Type::Path(p) => {
+                // only match BoxFuture<'a, ret_type>
+                if p.qself.is_none() && p.path.segments.len() == 1 {
+                    let box_fut_t = p.path.segments.last().unwrap();
+                    if &format!("{}", box_fut_t.ident) == "BoxFuture" {
+                        if let syn::PathArguments::AngleBracketed(ref pargs) = box_fut_t.arguments {
+                            if pargs.args.len() == 2 {
+                                if let syn::GenericArgument::Type(t) = pargs.args.last().unwrap() {
+                                    return Ok(quote!(#t));
+                                }
+                            }
+                        }
+                    }
+                }
+                err(ret_ty, INFER_ERR_MSG)?
+            }
+            syn::Type::ImplTrait(p) => {
+                // only match impl Future<Output=ret>
+                if p.bounds.len() == 1 {
+                    if let syn::TypeParamBound::Trait(t) = p.bounds.last().unwrap() {
+                        if t.path.segments.len() == 1 {
+                            let output = t.path.segments.last().unwrap();
+                            let trait_ident = &output.ident;
+                            if &quote!(#trait_ident).to_string() == "Future" {
+                                if let syn::PathArguments::AngleBracketed(ref pargs) =
+                                    output.arguments
+                                {
+                                    if pargs.args.len() == 1 {
+                                        if let syn::GenericArgument::Binding(b) =
+                                            pargs.args.last().unwrap()
+                                        {
+                                            let ty = &b.ty;
+                                            return Ok(quote!(#ty));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                err(ret_ty, INFER_ERR_MSG)?
+            }
+            _ => err(ret_ty, INFER_ERR_MSG)?,
+        };
+
+        Ok(ret)
+    }
+    fn infer_ret(function: &ItemFn) -> Result<TokenStream> {
+        let ItemFn {
+            sig: syn::Signature {
+                output, asyncness, ..
+            },
+            ..
+        } = function;
+
+        let tk = match asyncness {
+            Some(_) => match output {
+                syn::ReturnType::Default => quote!(()),
+                syn::ReturnType::Type(_, t) => quote!(#t),
+            },
+            None => match output {
+                syn::ReturnType::Default => err(output, "should return a future")?,
+                syn::ReturnType::Type(_, t) => Self::infer_ret_by_future(&**t)?,
+            },
+        };
+        Ok(tk)
+    }
+
+    fn new(function: &ItemFn, crayfish_path: &TokenStream) -> Result<Self> {
         let crayfish_path = crayfish_path.clone();
 
         let ItemFn {
-            sig:
-                syn::Signature {
-                    ident,
-                    inputs,
-                    output,
-                    ..
-                },
+            sig: syn::Signature { ident, inputs, .. },
             ..
         } = function;
 
@@ -70,10 +140,7 @@ impl HelperFunctionsGenerator {
             .to_string()
             .parse()
             .unwrap();
-        let ret_type: TokenStream = match output {
-            syn::ReturnType::Default => quote!(()),
-            syn::ReturnType::Type(_, t) => quote!(#t),
-        };
+        let ret_type: TokenStream = Self::infer_ret(&function)?;
 
         // first param is impl Context
         let params: Vec<_> = inputs.clone().into_iter().collect();
@@ -85,13 +152,13 @@ impl HelperFunctionsGenerator {
                 _ => panic!("method not implemented"),
             })
             .collect();
-        HelperFunctionsGenerator {
+        Ok(HelperFunctionsGenerator {
             crayfish_path,
             fn_id,
             fn_name,
             params,
             ret_type,
-        }
+        })
     }
 
     fn punctuated_params(&self) -> TokenStream {
@@ -271,7 +338,7 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
         Some(p) => quote!(#p),
         None => "::crayfish".parse().unwrap(),
     };
-    let gen = HelperFunctionsGenerator::new(&function, &crayfish_path);
+    let gen = HelperFunctionsGenerator::new(&function, &crayfish_path)?;
 
     let execute_fn = gen.gen_execute();
     let handler_fn = gen.gen_handler();
@@ -350,35 +417,39 @@ fn fn_hash(
     hasher.finish()
 }
 
-fn err(tokens: impl ToTokens, message: impl Display) -> syn::Result<TokenStream> {
-    Err(Error::new_spanned(tokens, message))
+pub enum SpawnMethod {
+    At,
+    FireAndForget,
 }
 
-pub fn expand_at(input: proc_macro::TokenStream) -> Result<TokenStream> {
+pub fn expand_at(input: proc_macro::TokenStream, spawn: SpawnMethod) -> Result<TokenStream> {
     let parser = Punctuated::<Expr, Token![,]>::parse_separated_nonempty;
+    use syn::parse::Parser;
     let args = parser.parse(input)?;
 
     let mut args = args;
-    if args.len() != 2 {
+    // check args num
+    let expected_arg_num: usize = 2;
+    if args.len() != expected_arg_num {
         err(
             &args,
             format!(
-                "this macro takes 2 argument but {} arguments were supplied",
+                "this macro takes {} argument but {} arguments were supplied",
+                expected_arg_num,
                 args.len()
             ),
         )?;
     }
+
+    // get func name & call args
     let call = args.pop().unwrap().into_value();
     let (async_func_name, call_args) =
         match call {
             Expr::Call(syn::ExprCall {
-                attrs,
-                func,
-                args,
-                ..
+                attrs, func, args, ..
             }) => {
                 if !attrs.is_empty() {
-                    err(&attrs[0], "doesn't suport attribute(s) here")?;
+                    err(&attrs[0], "Crayfish doesn't suport attribute(s) here")?;
                 }
                 let func_name;
                 match *func {
@@ -386,10 +457,14 @@ pub fn expand_at(input: proc_macro::TokenStream) -> Result<TokenStream> {
                         let mut p = p;
                         let mut last = p.path.segments.pop().unwrap().into_value();
                         if !last.arguments.is_empty() {
-                            err(&last, "doesn't support generic function")?;
+                            err(&last, "Crayfish doesn't support generic function")?;
                         }
                         let last_ident = &last.ident;
-                        let last_ident_str = at_async_fn_name(&quote!(#last_ident)).to_string();
+                        let last_ident_str = match spawn {
+                            SpawnMethod::At => at_async_fn_name,
+                            SpawnMethod::FireAndForget => at_ff_fn_name,
+                        }(&quote!(#last_ident))
+                        .to_string();
                         last.ident = syn::Ident::new(last_ident_str.as_str(), last.ident.span());
                         p.path.segments.push(last);
                         func_name = p
