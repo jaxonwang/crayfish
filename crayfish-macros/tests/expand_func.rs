@@ -2,7 +2,6 @@ use crayfish_macros::*;
 
 use futures::Future;
 use futures::FutureExt;
-use futures::future::BoxFuture;
 
 #[activity]
 #[allow(unused_variables)]
@@ -34,17 +33,15 @@ mod inside{
     }
 }
 
-// #[activity]
-// #[allow(unused_variables)]
-// fn bar_box(a: i32, b: i64, c: Vec<usize>, d: String) -> BoxFuture<'static, usize>{
-//     async move{
-//         if a == 0 {
-//             123
-//         }else{
-//             at!(crayfish::global_id::here(), bar_impl(a-1)).await
-//         }
-//     }.boxed()
-// }
+#[activity]
+#[allow(unused_variables)]
+async fn bar_box(a: i32, b: i64, c: Vec<usize>, d: String) -> usize {
+    if a == 0 {
+        123
+    }else{
+        at!(crayfish::global_id::here(), bar_impl(a-1)).await
+    }
+}
 
 #[activity]
 #[allow(unused_variables)]

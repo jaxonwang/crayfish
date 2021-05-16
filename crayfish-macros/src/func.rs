@@ -47,7 +47,7 @@ struct HelperFunctionsGenerator {
     fn_id: TokenStream,
     fn_name: TokenStream,
     params: Vec<(String, Type)>,
-    ret_type: TokenStream,
+    pub ret_type: TokenStream,
 }
 
 impl HelperFunctionsGenerator {
@@ -328,6 +328,7 @@ impl HelperFunctionsGenerator {
 
         }
     }
+
 }
 
 fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream> {
@@ -345,12 +346,37 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
     let at_async_fn = gen.gen_at_async();
     let at_ff_fn = gen.gen_at_ff();
 
-    // insert context
-    let context_arg_name = context_arg_name();
-    let arg_token = quote!(#context_arg_name: &mut impl #crayfish_path::runtime::ApgasContext);
-    let context_arg: syn::FnArg = syn::parse2(arg_token)?;
     let mut function = function;
-    function.sig.inputs.insert(0, context_arg);
+    // modify fn
+    let ItemFn{
+        ref mut sig,
+        ref mut block,
+        ..
+    } = function;
+
+    let context_arg_name = context_arg_name();
+    let arg_token;
+
+    // change to boxed
+    if sig.asyncness.is_some(){
+        sig.asyncness = None;
+        let ret_type = &gen.ret_type;
+        sig.output = syn::parse2(quote!( -> #crayfish_path::futures::future::BoxFuture<'cfctxlt, #ret_type> ))?;
+        arg_token = quote!(#context_arg_name: &'cfctxlt mut impl #crayfish_path::runtime::ApgasContext);
+        sig.generics = syn::parse2(quote!(<'cfctxlt>))?;
+        *block = Box::new(syn::parse2(quote!{
+            {
+                use #crayfish_path::futures::FutureExt;
+                async move #block .boxed() 
+            }
+        })?)
+    }else{
+        arg_token = quote!(#context_arg_name: &mut impl #crayfish_path::runtime::ApgasContext);
+    }
+
+    // insert context
+    let context_arg: syn::FnArg = syn::parse2(arg_token)?;
+    sig.inputs.insert(0, context_arg);
 
     Ok(quote!(
     #function
