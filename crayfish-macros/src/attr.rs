@@ -9,6 +9,7 @@ use syn::NestedMeta;
 use syn::Path;
 use syn::Type;
 
+#[derive(Default)]
 pub struct Attributes {
     pub crayfish_path: Option<Path>,
     pub ret_type: Option<Type>,
@@ -58,5 +59,12 @@ impl Attributes {
             crayfish_path,
             ret_type,
         })
+    }
+
+    pub fn get_path(&self) -> TokenStream {
+        match &self.crayfish_path {
+            Some(p) => quote!(#p),
+            None => "::crayfish".parse().unwrap(),
+        }
     }
 }

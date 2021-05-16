@@ -2,6 +2,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::GenericParam;
 use syn::Item;
+use syn::AttributeArgs;
+use crate::attr::Attributes;
+use crate::utils::err;
 
 pub(crate) enum RSendImpl {
     Squashed,
@@ -9,10 +12,9 @@ pub(crate) enum RSendImpl {
     DefaultImpl,
 }
 
-pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
-    // let
-    // TODO: support re-export crayfish
-    let crayfish_path: TokenStream = "::crayfish".parse().unwrap();
+pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: Item) -> syn::Result<TokenStream> {
+    let attrs = Attributes::new(args)?;
+    let crayfish_path: TokenStream = attrs.get_path();
     let remote_send_trait: TokenStream = quote!(#crayfish_path::args::RemoteSend);
 
     let serde_path = format!("{}::serde", crayfish_path);
@@ -42,10 +44,8 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
             } = s;
             (ident, generics)
         }
-        _ => {
-            return quote! {
-                compile_error!{"attributes only applys to struct, enum."}
-            }
+        thing => {
+            return err(thing, "attributes only applys to struct, enum.")
         }
     };
 
@@ -108,11 +108,9 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
     match arg_type {
         RSendImpl::Squashable => {
             if !generics.params.is_empty() {
-                return quote! {
-                    compile_error!{"current version doesn't support generics for squashable type."}
-                };
+                return err(&generics,"current version doesn't support generics for squashable type." )
             }
-            return quote! {
+            return Ok(quote! {
                 #out_item
                 #[doc(hidden)]
                 #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
@@ -122,13 +120,13 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, item: Item) -> TokenStream {
                         #crayfish_path::runtime_meta::SquashHelperMeta::new::<#name>()
                     };
                 };
-            };
+            });
         }
         _ => (),
     }
 
-    quote! {
+    Ok(quote! {
         #out_item
         #rsend_impl
-    }
+    })
 }
