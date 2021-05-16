@@ -50,3 +50,12 @@ fn bar_impl(a: i32) -> impl Future<Output=usize>{
         123
     }.boxed()
 }
+
+use std::future::Future as Fut;
+#[activity(ret = "Vec<usize>")]
+#[allow(unused_variables)]
+fn no_infer_ret(a: i32) -> impl Fut<Output=Vec<usize>>{
+    async {
+        vec![123]
+    }
+}

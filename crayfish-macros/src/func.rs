@@ -53,7 +53,7 @@ struct HelperFunctionsGenerator {
 impl HelperFunctionsGenerator {
     fn infer_ret_by_future(ret_ty: &Type) -> Result<TokenStream> {
         const INFER_ERR_MSG: &str =
-            "can not infer return type. Please set attribute: #[activity(ret = \"Type\")]";
+            "can not infer return type. Please set a attribute: #[activity(ret = \"Type\")]";
 
         let ret = match ret_ty {
             syn::Type::Path(p) => {
@@ -124,7 +124,7 @@ impl HelperFunctionsGenerator {
         Ok(tk)
     }
 
-    fn new(function: &ItemFn, crayfish_path: &TokenStream) -> Result<Self> {
+    fn new(function: &ItemFn, crayfish_path: &TokenStream, attrs: &Attributes) -> Result<Self> {
         let crayfish_path = crayfish_path.clone();
 
         let ItemFn {
@@ -140,7 +140,10 @@ impl HelperFunctionsGenerator {
             .to_string()
             .parse()
             .unwrap();
-        let ret_type: TokenStream = Self::infer_ret(&function)?;
+        let ret_type: TokenStream = match &attrs.ret_type{
+            Some(t) => quote!(#t),
+            None => Self::infer_ret(&function)?
+        };
 
         // first param is impl Context
         let params: Vec<_> = inputs.clone().into_iter().collect();
@@ -335,11 +338,11 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
     // TODO: support re-export crayfish
     //
 
-    let crayfish_path: TokenStream = match attrs.crayfish_path {
+    let crayfish_path: TokenStream = match &attrs.crayfish_path {
         Some(p) => quote!(#p),
         None => "::crayfish".parse().unwrap(),
     };
-    let gen = HelperFunctionsGenerator::new(&function, &crayfish_path)?;
+    let gen = HelperFunctionsGenerator::new(&function, &crayfish_path, &attrs)?;
 
     let execute_fn = gen.gen_execute();
     let handler_fn = gen.gen_handler();
