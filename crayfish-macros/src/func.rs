@@ -50,7 +50,7 @@ struct HelperFunctionsGenerator {
 impl HelperFunctionsGenerator {
     fn infer_ret_by_future(ret_ty: &Type) -> Result<TokenStream> {
         const INFER_ERR_MSG: &str =
-            "can not infer return type. Please set a attribute: #[activity(ret = \"Type\")]";
+            "can not infer return type. Please use 'async' keyword or set a attribute: #[activity(ret = \"Type\")]";
 
         let ret = match ret_ty {
             syn::Type::Path(p) => {
@@ -521,14 +521,19 @@ pub fn finish(args: Option<AttributeArgs>, input: proc_macro::TokenStream) -> Re
     let block = TokenStream::from(input);
 
     // error if return inside finish block
-    for tree in block.clone().into_iter(){
-        match tree{
+    for tree in block.clone().into_iter() {
+        match tree {
             TokenTree::Ident(id) => {
-                if &id.to_string() == "return"{
-                    return err(id, "returning from finish blocks is not allowed until the async closure become stable in Rust")
+                if &id.to_string() == "return" {
+                    return err(id, "returning from finish blocks is not allowed until the async closure become stable in Rust");
                 }
             }
-            _ => ()
+            TokenTree::Punct(p) => {
+                if p.as_char() == '?' {
+                    return err(p, "try expression is not allowed in finish block. TODO: this check might be false positive.");
+                }
+            }
+            _ => (),
         }
     }
 
@@ -549,7 +554,7 @@ pub fn finish(args: Option<AttributeArgs>, input: proc_macro::TokenStream) -> Re
     Ok(ret)
 }
 
-pub fn main(args: AttributeArgs, main: ItemFn) -> Result<TokenStream>{
+pub fn main(args: AttributeArgs, main: ItemFn) -> Result<TokenStream> {
     let attrs = Attributes::new(args)?;
     let crayfish_path = attrs.get_path();
 
@@ -561,9 +566,9 @@ pub fn main(args: AttributeArgs, main: ItemFn) -> Result<TokenStream>{
     // change main ident
 
     // check args. if empty, insert
-    if main.sig.inputs.is_empty(){
+    if main.sig.inputs.is_empty() {
         let arg = syn::parse2::<syn::FnArg>(quote!(_: ::std::vec::Vec<::std::string::String>))?;
-        let args :Punctuated::<syn::FnArg, Token![,]> = vec![arg].into_iter().collect();
+        let args: Punctuated<syn::FnArg, Token![,]> = vec![arg].into_iter().collect();
         main.sig.inputs = args
     }
 
@@ -571,7 +576,7 @@ pub fn main(args: AttributeArgs, main: ItemFn) -> Result<TokenStream>{
     let user_main_name = &main.sig.ident;
     let user_main_name = prepend_ugly_prefix(quote!(#user_main_name).to_string().as_str());
     main.sig.ident = syn::Ident::new(&user_main_name.to_string(), main.sig.ident.span());
-    
+
     let output = &main.sig.output;
 
     let ret = quote!(

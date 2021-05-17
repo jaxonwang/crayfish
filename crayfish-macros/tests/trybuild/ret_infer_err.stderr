@@ -1,4 +1,4 @@
-error: can not infer return type. Please set a attribute: #[activity(ret = "Type")]
+error: can not infer return type. Please use 'async' keyword or set a attribute: #[activity(ret = "Type")]
  --> $DIR/ret_infer_err.rs:5:24
   |
 5 | fn bar_impl(a: i32) -> impl Fut<Output=usize>{

@@ -1,0 +1,5 @@
+error: try expression is not allowed in finish block. TODO: this check might be false positive.
+ --> $DIR/bad_finish.rs:9:31
+  |
+9 |             let b = a.unwrap()?;
+  |                               ^
