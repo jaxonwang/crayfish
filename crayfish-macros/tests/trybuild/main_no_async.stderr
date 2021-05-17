@@ -1,0 +1,15 @@
+error: Crayfish requires main function to be 'async'
+ --> $DIR/main_no_async.rs:2:5
+  |
+2 | pub fn foo() -> Result<()>{
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> $DIR/main_no_async.rs:1:1
+  |
+1 | / #[crayfish_macros::main]
+2 | | pub fn foo() -> Result<()>{
+3 | |     println!("hello foo");
+4 | |     Ok(())
+5 | | }
+  | |_^ consider adding a `main` function to `$DIR/tests/trybuild/main_no_async.rs`

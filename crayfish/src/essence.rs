@@ -68,9 +68,10 @@ fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()>{
     resovled(item)
 }
 
-pub fn genesis<F, MOUT>(main: F) -> MOUT
+pub fn genesis<F, FOUT, MOUT>(main: F) -> MOUT
 where
-    F: Future<Output = MOUT> + Send + 'static,
+    F: FnOnce(Vec<String>) -> FOUT,
+    FOUT: Future<Output = MOUT> + Send + 'static,
     MOUT: Send + 'static,
 {
     // logger
@@ -89,6 +90,7 @@ where
     // start network context
     let mut context = network::context::CommunicationContext::new(msg_recv_callback);
     let world_size = context.world_size();
+    let main_fut = main(context.cmd_args().to_vec());
 
     // prepare factories
     let factory = Box::new(SquashBufferFactory::new());
@@ -142,7 +144,7 @@ where
     // main
     let ret = rt.block_on(async move {
         executor::spawn(worker_loop);
-        executor::spawn(main).await.unwrap()
+        executor::spawn(main_fut).await.unwrap()
     });
 
     // should not perform any network before init done

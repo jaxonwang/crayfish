@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use syn::parse_macro_input;
 use syn::AttributeArgs;
 use syn::Item;
+use syn::ItemFn;
 
 mod args;
 mod attr;
@@ -78,6 +79,15 @@ pub fn finish_attr(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn finish(input: TokenStream) -> TokenStream {
     func::finish(None, input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[proc_macro_attribute]
+pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
+    let item_fn = parse_macro_input!(input as ItemFn);
+    func::main(args, item_fn)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

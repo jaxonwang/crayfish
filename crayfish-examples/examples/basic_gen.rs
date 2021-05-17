@@ -1,4 +1,3 @@
-use crayfish::essence;
 use crayfish::global_id::Place;
 use crayfish::args::RemoteSend;
 use crayfish::global_id;
@@ -85,6 +84,7 @@ async fn real_fn(a: A, b: B, c: i32) -> R {
 }
 
 // desugered finish
+#[crayfish::main]
 async fn finish() {
     crayfish::finish!{
     if global_id::here() == 0 {
@@ -103,8 +103,4 @@ async fn finish() {
         info!("Main finished")
     }
     }
-}
-
-pub fn main() {
-    essence::genesis(finish());
 }

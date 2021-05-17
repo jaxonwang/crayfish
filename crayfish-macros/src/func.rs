@@ -548,3 +548,41 @@ pub fn finish(args: Option<AttributeArgs>, input: proc_macro::TokenStream) -> Re
     };
     Ok(ret)
 }
+
+pub fn main(args: AttributeArgs, main: ItemFn) -> Result<TokenStream>{
+    let attrs = Attributes::new(args)?;
+    let crayfish_path = attrs.get_path();
+
+    if main.sig.asyncness.is_none() {
+        return err(&main.sig, "Crayfish requires main function to be 'async'");
+    }
+
+    let mut main = main;
+    // change main ident
+
+    // check args. if empty, insert
+    if main.sig.inputs.is_empty(){
+        let arg = syn::parse2::<syn::FnArg>(quote!(_: ::std::vec::Vec<::std::string::String>))?;
+        let args :Punctuated::<syn::FnArg, Token![,]> = vec![arg].into_iter().collect();
+        main.sig.inputs = args
+    }
+
+    // rename func
+    let user_main_name = &main.sig.ident;
+    let user_main_name = prepend_ugly_prefix(quote!(#user_main_name).to_string().as_str());
+    main.sig.ident = syn::Ident::new(&user_main_name.to_string(), main.sig.ident.span());
+    
+    let output = &main.sig.output;
+
+    let ret = quote!(
+
+        #main
+
+        pub fn main() #output{
+            #crayfish_path::essence::genesis(#user_main_name)
+        }
+
+    );
+
+    Ok(ret)
+}

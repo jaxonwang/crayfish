@@ -138,6 +138,7 @@ fn async_create_no_wait_for_fn_id_0(
 }
 
 // desugered finish
+#[crayfish::main]
 async fn finish() -> Result<(), std::io::Error> {
     if global_id::here() == 0 {
         let mut ctx = ConcreteContext::new_frame();
@@ -153,8 +154,4 @@ async fn finish() -> Result<(), std::io::Error> {
         info!("Main finished");
     }
     Ok(())
-}
-
-pub fn main() -> Result<(), std::io::Error> {
-    essence::genesis(finish())
 }
