@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -10,17 +10,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  test:
+    name: test
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v2
-    - name: Submodules
-      run: |
-        git submodule sync --recursive
-        git submodule update --init --force --recursive
-    - name: Build
-      run: cargo build -vv
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        run: rustup update stable
+      - name: Submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive
+      - name: Build
+        run: cargo build --all-targets -vv
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Run examples
+        run: |
+          GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
+          GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
+        
+  valgrind:
+    name: valgrind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        run: rustup update stable
+      - name: Submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive
+      - name: Build
+        run: cargo build --all-targets -vv
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y valgrind
+      - name: Run valgrind test-mem
+        run: |
+          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
+          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
