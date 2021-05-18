@@ -98,7 +98,7 @@ where
     // init static data for communications
     init_worker_task_queue();
     init_task_item_channels();
-    global_id::init_here(context.here());
+    global_id::init_here(context.here().as_place());
     global_id::init_world_size(world_size);
 
     // prepare distributor

@@ -8,8 +8,6 @@ use bit_vec::BitVec;
 use gex_sys::*;
 use rustc_hash::FxHashMap;
 use std::convert::TryInto;
-use std::mem;
-use std::mem::MaybeUninit;
 use std::os::raw::*;
 use std::ptr::null_mut;
 use std::slice;
@@ -578,9 +576,8 @@ where
         }
     }
 
-    pub fn collective_operator(&self) -> GexCollectiveOperator {
+    pub(crate) fn collective_operator(&self) -> GexCollectiveOperator {
         GexCollectiveOperator {
-            here: self.local_rank,
             sender: self.op_sender.as_ref().unwrap().clone(),
             barrier_event: None,
         }
@@ -611,8 +608,7 @@ impl MessageSender for SingleSender {
     }
 }
 
-pub struct GexCollectiveOperator {
-    here: Rank,
+pub(crate) struct GexCollectiveOperator {
     sender: mpsc::Sender<NetworkOperation>,
     barrier_event: Option<mpsc::Receiver<()>>,
 }
@@ -660,31 +656,18 @@ impl CollectiveOperator for GexCollectiveOperator {
         self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
         rx.recv().unwrap();
     }
-
-    fn broadcast<T: Copy>(&self, root: Rank, value: Option<T>) -> T {
-        let mut value = value;
-        let type_size = mem::size_of::<T>();
-        let mut broadcast_value = MaybeUninit::<T>::uninit();
-        let bytes = if root == self.here {
-            value.as_mut().expect("value from root must not be None!") as *mut T as *mut u8
-        } else {
-            broadcast_value.as_mut_ptr() as *mut u8
-        };
-
+    
+    fn broadcast(&self, root: Rank, bytes:*mut u8, size: usize){
         let (tx, rx) = mpsc::sync_channel(1);
         self.sender.send(NetworkOperation::Broadcast(
             root,
-            bytes as *mut u8,
-            type_size,
+            bytes,
+            size,
             tx,
         )).unwrap();
         rx.recv().unwrap();
-        if root == self.here {
-            value.unwrap()
-        } else {
-            unsafe { broadcast_value.assume_init() }
-        }
     }
+
 }
 
 #[cfg(test)]
