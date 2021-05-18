@@ -1,8 +1,6 @@
-use crate::network::Rank;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use std::cell::Cell;
-use std::convert::TryInto;
 use std::sync::Mutex;
 extern crate once_cell;
 
@@ -60,8 +58,8 @@ thread_local! {
     static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
 }
 
-pub(crate) fn init_here(here: Rank) {
-    HERE_STATIC.set(here.as_i32().try_into().unwrap()).unwrap();
+pub(crate) fn init_here(here: Place) {
+    HERE_STATIC.set(here).unwrap();
 }
 
 pub(crate) fn init_world_size(size: usize){

@@ -36,6 +36,7 @@ pub trait RemoteSend: Serialize + DeserializeOwned + Any + Send + 'static {
 pub trait Squashed: Serialize + DeserializeOwned + Send + Default {}
 impl<T> Squashed for T where T: Serialize + DeserializeOwned + Send + Default {}
 
+#[macro_export]
 macro_rules! impl_body {
     () => {
         type Output = ();

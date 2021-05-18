@@ -12,6 +12,8 @@ pub mod essence;
 pub mod runtime_meta;
 pub mod args;
 mod executor;
+pub mod shared;
+pub mod collective;
 
 mod prelude {
     pub use crate::executor::spawn;
