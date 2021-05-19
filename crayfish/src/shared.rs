@@ -69,10 +69,22 @@ where
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct PlaceLocalWeak<T: ?Sized> {
     id: HandleID,
     _mark: PhantomData<T>,
+}
+
+impl<T> Clone for PlaceLocalWeak<T>
+where
+    T: ?Sized,
+{
+    fn clone(&self) -> Self {
+        PlaceLocalWeak {
+            id: self.id,
+            _mark: PhantomData,
+        }
+    }
 }
 
 // TODO remove that, when https://github.com/jaxonwang/rust-apgas/issues/18 solved
@@ -120,7 +132,7 @@ mod test {
             threads.into_iter().for_each(|t| t.join().unwrap());
             weak_ptrs_invalid
             // now pl is destroyed. return ptrs should be invalid.
-        }; 
+        };
         ptrs.into_iter()
             .for_each(|p| assert!(p.upgrade().is_none()));
     }

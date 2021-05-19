@@ -1,27 +1,21 @@
-use crayfish::activity::ActivityId;
-use crayfish::activity::FunctionLabel;
-use crayfish::activity::TaskItem;
-use crayfish::activity::TaskItemBuilder;
-use crayfish::activity::TaskItemExtracter;
-use crayfish::essence;
+use crayfish::collective;
 use crayfish::global_id;
 use crayfish::global_id::world_size;
-use crayfish::global_id::ActivityIdMethods;
 use crayfish::inventory;
 use crayfish::logging::*;
 use crayfish::place::Place;
-use crayfish::runtime::wait_all;
-use crayfish::runtime::wait_single;
-use crayfish::runtime::ApgasContext;
-use crayfish::runtime::ConcreteContext;
-use crayfish::runtime_meta::FunctionMetaData;
-use futures::future::BoxFuture;
-use futures::FutureExt;
+use crayfish::shared::PlaceLocal;
+use crayfish::shared::PlaceLocalWeak;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs::File;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::panic::AssertUnwindSafe;
+use std::sync::Mutex;
+use crayfish::finish;
+use crayfish::ff;
 
 extern crate crayfish;
 extern crate futures;
@@ -41,16 +35,6 @@ const BASE_G: u8 = b'G';
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct KMerData {
     count: CountNumber,
-}
-
-fn merge_table(to: &mut CountTable, from: CountTable) {
-    for (kmer, kmerdata) in from {
-        if to.contains_key(&kmer) {
-            to.get_mut(&kmer).unwrap().count += kmerdata.count;
-        } else {
-            to.insert(kmer, kmerdata);
-        }
-    }
 }
 
 type CountTable = HashMap<KMer, KMerData>;
@@ -98,7 +82,21 @@ fn update_count_table(count_table: &mut CountTable, kmer: KMer, kmerdata: KMerDa
     };
 }
 
-async fn kmer_counting(_ctx: &mut impl ApgasContext, reads: Reads) -> CountTable {
+fn get_partition(kmer: &KMer) -> Place {
+    let mut hasher = DefaultHasher::new();
+    kmer.hash(&mut hasher);
+    (hasher.finish() % global_id::world_size() as u64) as Place
+}
+
+#[crayfish::activity]
+async fn update_kmer(kmer: KMer, data: KMerData, final_ptr: PlaceLocalWeak<Mutex<CountTable>>) {
+    let ptr = final_ptr.upgrade().unwrap();
+    let mut h = ptr.lock().unwrap();
+    update_count_table(&mut h, kmer, data);
+}
+
+#[crayfish::activity]
+async fn kmer_counting(reads: Reads, final_ptr: PlaceLocalWeak<Mutex<CountTable>>) {
     let mut count_table = CountTable::new();
 
     for read in reads {
@@ -124,77 +122,18 @@ async fn kmer_counting(_ctx: &mut impl ApgasContext, reads: Reads) -> CountTable
         }
     }
 
-    count_table
-}
-
-// block until real function finished
-async fn execute_and_send_fn0(my_activity_id: ActivityId, waited: bool, reads: Reads) {
-    let fn_id: FunctionLabel = 0; // macro
-    let finish_id = my_activity_id.get_finish_id();
-    let mut ctx = ConcreteContext::inherit(finish_id);
-    // ctx seems to be unwind safe
-    let future = AssertUnwindSafe(kmer_counting(&mut ctx, reads)); //macro
-    let result = future.catch_unwind().await;
-    essence::send_activity_result(ctx, my_activity_id, fn_id, waited, result);
-}
-
-// the one executed by worker
-fn real_fn_wrap_execute_from_remote(item: TaskItem) -> BoxFuture<'static, ()> {
-    async move {
-        let waited = item.is_waited();
-        let mut e = TaskItemExtracter::new(item);
-        let my_activity_id = e.activity_id();
-
-        // wait until function return
-        trace!(
-            "Got activity:{} from {}",
-            my_activity_id,
-            my_activity_id.get_spawned_place()
-        );
-        execute_and_send_fn0(my_activity_id, waited, e.arg()).await; // macro
+    for (k, n) in count_table {
+        crayfish::ff!(get_partition(&k), update_kmer(k, n, final_ptr.clone()));
     }
-    .boxed()
-}
-
-crayfish::inventory::submit! {
-    FunctionMetaData::new(0, real_fn_wrap_execute_from_remote,
-                          String::from("kmer_counting"),
-                          String::from(file!()),
-                          line!(),
-                          String::from(module_path!())
-                          )
-}
-
-// the desugered at async and wait
-fn async_create_for_fn_id_0(
-    my_activity_id: ActivityId,
-    dst_place: Place,
-    reads: Reads,
-) -> impl futures::Future<Output = CountTable> {
-    // macro
-    let fn_id: FunctionLabel = 0; // macro
-
-    let f = wait_single(my_activity_id); // macro
-    if dst_place == global_id::here() {
-        crayfish::spawn(execute_and_send_fn0(my_activity_id, true, reads)); // macro
-    } else {
-        trace!("spawn activity:{} at place: {}", my_activity_id, dst_place);
-        let mut builder = TaskItemBuilder::new(fn_id, dst_place, my_activity_id);
-        builder.arg(reads); //macro
-        builder.waited();
-        let item = builder.build_box();
-        ConcreteContext::send(item);
-    }
-    f
 }
 
 // desugered finish
 #[crayfish::main]
 async fn inner_main() {
+    let count_table_ptr = PlaceLocal::new(Mutex::new(CountTable::new()));
+    collective::barrier();
     if global_id::here() == 0 {
-        let mut ctx = ConcreteContext::new_frame();
         // ctx contains a new finish id now
-        let mut rets = vec![];
         let chunk_size = 4096;
         let args = std::env::args().collect::<Vec<_>>();
         let filename = &args[1];
@@ -205,6 +144,7 @@ async fn inner_main() {
         let mut next_place: Place = 0;
         let mut buffer: Reads = vec![];
 
+        finish! {
         for (l_num, line) in lines.enumerate() {
             if l_num % 4 != 1 {
                 continue;
@@ -219,43 +159,31 @@ async fn inner_main() {
                     );
                     let mut new_read = vec![];
                     std::mem::swap(&mut new_read, &mut buffer);
-                    rets.push(async_create_for_fn_id_0(ctx.spawn(), next_place, new_read));
+                    ff!(next_place, kmer_counting(new_read, count_table_ptr.downgrade()));
                     next_place = (next_place + 1) % (world_size as Place);
                 }
                 buffer.push(s.into_bytes());
             }
         }
-        rets.push(async_create_for_fn_id_0(ctx.spawn(), next_place, buffer));
-
-        let mut global_table = CountTable::new();
-        for (i, ret) in rets.into_iter().enumerate() {
-            let count_table = ret.await;
-            warn!(
-                "Merging {}~{} reads count table",
-                i * chunk_size,
-                (i + 1) * chunk_size - 1
-            );
-            merge_table(&mut global_table, count_table);
         }
-
-        warn!("got {} kmers", global_table.len());
-        let p = global_table.iter().take(100).collect::<Vec<_>>();
-        for (kmer, data) in p {
-            println!("{}: {}", String::from_utf8_lossy(&kmer[..]), data.count);
-        }
-
-        let mut hist = vec![0usize; 2048];
-        for (_, data) in global_table {
-            if data.count as usize > hist.len(){
-                for _ in 0..data.count {
-                    hist.push(0);
-                }
-            }
-            hist[data.count as usize] += 1;
-        }
-        println!("{:?}", hist);
-
-        wait_all(ctx).await;
-        info!("Main finished");
     }
+    collective::barrier();
+
+    let global_table = count_table_ptr.lock().unwrap();
+
+    let p = global_table.iter().take(100).collect::<Vec<_>>();
+    for (kmer, data) in p {
+        println!("{}: {}", String::from_utf8_lossy(&kmer[..]), data.count);
+    }
+
+    let mut hist = vec![0usize; 2048];
+    for (_, data) in global_table.iter() {
+        if data.count as usize > hist.len() {
+            for _ in 0..data.count {
+                hist.push(0);
+            }
+        }
+        hist[data.count as usize] += 1;
+    }
+    println!("{:?}", hist);
 }
