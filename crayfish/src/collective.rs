@@ -114,7 +114,6 @@ mod test {
     use once_cell::sync::Lazy;
     use parking_lot::Mutex; // use for a non poison mutex
     use parking_lot::MutexGuard;
-    use std::thread;
 
     static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
     struct TestGuardForStatic<'a> {
@@ -156,18 +155,6 @@ mod test {
     }
 
     #[test]
-    pub fn test_collective() {
-        let _t = TestGuardForStatic::new();
-        // put in thread, return coll before test lock released.
-        thread::spawn(|| {
-            let _g = CollGuard::new();
-            do_coll();
-        })
-        .join()
-        .unwrap();
-    }
-
-    #[test]
     #[should_panic]
     pub fn test_collective_dobule_set() {
         let _t = TestGuardForStatic::new();
@@ -175,51 +162,8 @@ mod test {
     }
 
     #[test]
-    pub fn test_collective_main_thread_exit_return_back() {
-        let _t = TestGuardForStatic::new();
-        let (tx1, rx1) = std::sync::mpsc::channel();
-        let (tx2, rx2) = std::sync::mpsc::channel();
-        let t = thread::spawn(move || {
-            let _g = CollGuard::new();
-            do_coll();
-            tx1.send(()).unwrap();
-            rx2.recv().unwrap();
-            drop(_g);
-        });
-        rx1.recv().unwrap();
-        assert!(COLLECTIVE_OPERATOR.lock().is_none());
-        tx2.send(()).unwrap();
-        t.join().unwrap();
-        assert!(COLLECTIVE_OPERATOR.lock().is_some());
-    }
-
-    #[test]
-    pub fn test_more_than_1_thread() {
-        let _t = TestGuardForStatic::new();
-        let thread_num = 10;
-        let _g = CollGuard::new();
-        do_coll();
-        let threads: Vec<_> = (0..thread_num)
-            .map(|_| {
-                thread::spawn(|| {
-                    do_coll();
-                })
-            })
-            .collect();
-        let paniced: usize = threads
-            .into_iter()
-            .map(|t| match t.join() {
-                Ok(_) => 0,
-                Err(_) => 1,
-            })
-            .sum();
-        assert_eq!(paniced, thread_num);
-    }
-
-    #[test]
     pub fn test_with_counter() {
         let _t = TestGuardForStatic::new();
-        let _g = CollGuard::new();
         FinishCounterGuard::new();
         do_coll();
     }
@@ -228,7 +172,6 @@ mod test {
     #[should_panic]
     pub fn test_with_counter_panic() {
         let _t = TestGuardForStatic::new();
-        let _g = CollGuard::new();
         let _fg = FinishCounterGuard::new();
         do_coll()
     }
