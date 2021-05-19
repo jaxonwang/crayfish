@@ -1,9 +1,8 @@
+use crayfish::essence;
 use crayfish::logging;
 use crayfish::logging::*;
 use crayfish::network;
-use crayfish::network::CollectiveOperator;
 use crayfish::network::MessageSender;
-use crayfish::network::Rank;
 
 extern crate crayfish;
 
@@ -30,49 +29,24 @@ pub fn main() {
     let context = network::context::CommunicationContext::new(callback);
     let sender = context.single_sender();
 
-    let here = context.here();
     let world = context.world_size();
 
     print_hostname();
     crossbeam::scope(|scope| {
         let mut context = context;
-        let coll = context.collective_operator();
+        essence::init_collective_operator(&context);
         context.init();
         scope.spawn(|_| {
             let sender = sender;
-            let mut coll = coll;
             for p in 0..world {
                 sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
-            info!("before barrier");
-            coll.barrier();
-            info!("after barrier");
             for p in 0..world {
                 sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
-            info!("before barrier notify");
-            coll.barrier_notify();
-            coll.barrier_try();
             for p in 0..world {
                 sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
-            coll.barrier_wait();
-            info!("after barrier wait");
-            for p in 0..world {
-                sender.send_msg(network::Rank::new(p as i32), payload.clone());
-            }
-            log::logger().flush();
-
-            let broadcast_value:usize = 123456;
-            let received: usize;
-            let root = Rank::new(0);
-            if here == root {
-                received = coll.broadcast(root, Some(broadcast_value));
-            } else {
-                received = coll.broadcast(root, None);
-            }
-            assert_eq!(broadcast_value, received);
-            info!("broadcast value {}", broadcast_value);
         });
         context.run();
     })

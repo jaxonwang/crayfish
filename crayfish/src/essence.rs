@@ -5,16 +5,16 @@ use crate::activity::SquashBufferFactory;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemBuilder;
 use crate::args::RemoteSend;
+use crate::collective;
 use crate::executor;
-use crate::runtime_meta;
 use crate::global_id;
 use crate::global_id::ActivityIdMethods;
 use crate::global_id::FinishIdMethods;
 use crate::logging;
 use crate::logging::*;
-use crate::network;
-use crate::network::CollectiveOperator;
+use crate::network::context::CommunicationContext;
 use crate::network::Rank;
+use crate::network::MessageHandler;
 use crate::runtime::init_task_item_channels;
 use crate::runtime::init_worker_task_queue;
 use crate::runtime::message_recv_callback;
@@ -24,8 +24,9 @@ use crate::runtime::ApgasContext;
 use crate::runtime::ConcreteContext;
 use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
-use futures::Future;
+use crate::runtime_meta;
 use futures::future::BoxFuture;
+use futures::Future;
 use std::thread;
 
 pub fn send_activity_result<T: RemoteSend>(
@@ -62,10 +63,15 @@ pub fn send_activity_result<T: RemoteSend>(
     }
 }
 
-fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()>{
+fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()> {
     let fn_id = item.function_id();
     let resovled = runtime_meta::get_func_table().get(&fn_id).unwrap().fn_ptr;
     resovled(item)
+}
+
+// make this public for integration test
+pub fn init_collective_operator<T: MessageHandler>(ctx: &CommunicationContext<T>) {
+    collective::set_coll(Box::new(ctx.collective_operator()));
 }
 
 pub fn genesis<F, FOUT, MOUT>(main: F) -> MOUT
@@ -88,7 +94,7 @@ where
         |src: Rank, data: &[u8]| message_recv_callback::<SquashBufferFactory>(src, data);
 
     // start network context
-    let mut context = network::context::CommunicationContext::new(msg_recv_callback);
+    let mut context = CommunicationContext::new(msg_recv_callback);
     let world_size = context.world_size();
     let main_fut = main(context.cmd_args().to_vec());
 
@@ -101,9 +107,11 @@ where
     global_id::init_here(context.here().as_place());
     global_id::init_world_size(world_size);
 
+    // init collective operator, which will be used by main
+    init_collective_operator(&context);
+
     // prepare distributor
     let sender = context.single_sender();
-    let coll = context.collective_operator();
     let buffer_receiver = take_message_buffer_receiver();
     let distributor = Distributor::new(factory, world_size, sender, buffer_receiver);
 
@@ -150,6 +158,7 @@ where
     // should not perform any network before init done
     init_done_r.recv().unwrap();
     // wait till all finishes;
+    let coll = collective::take_coll();
     coll.barrier();
     trigger.stop();
     drop(coll); // drop coll to stop network context
