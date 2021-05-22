@@ -1,8 +1,8 @@
 use std::env;
-use std::ffi::OsStr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::fs;
 
 extern crate bindgen;
 extern crate cc;
@@ -39,28 +39,29 @@ pub fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir);
     let libdir = out_dir.join("lib");
-    let working_dir = Path::new("gasnet");
+    let gasnet_dir = fs::canonicalize("gasnet").unwrap();
+    let abs_path = |s:&str| gasnet_dir.join(s);
+    let working_dir = out_dir.join("gasnet");
+    if !working_dir.exists(){
+        fs::create_dir(&working_dir).unwrap();
+    }
 
     // bootstrap
-    let mut bt = Command::new("sh");
-    bt.arg("Bootstrap").current_dir(&working_dir);
-    if !working_dir.join("configure").exists() {
+    let mut bt = Command::new("/bin/sh");
+    bt.arg(abs_path("Bootstrap")).current_dir(&working_dir);
+    if !abs_path("configure").exists() {
         // no re-bootstrap
-        if !working_dir.join("Bootstrap").exists() {
+        if !abs_path("Bootstrap").exists() {
             panic!("Can not find the Bootstrap script for GASNET. Did your forget \"git clone --recursive\"?")
         }
         run_command("bootstrap", &mut bt);
     }
 
     // configure
-    let mut cfg = Command::new("sh");
+    let mut cfg = Command::new("/bin/sh");
     let envs = vec![("CFLAGS", "-fPIC"), ("CXXFLAGS", "-fPIC")];
-    let envs: Vec<_> = envs
-        .iter()
-        .map(|(k, v)| (OsStr::new(k), OsStr::new(v)))
-        .collect();
     cfg.envs(envs);
-    cfg.arg("configure")
+    cfg.arg(abs_path("configure"))
         .arg(format!("--prefix={}", out_dir.display()))
         .arg("--enable-par")
         .arg("--disable-parsync")
