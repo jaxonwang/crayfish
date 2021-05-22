@@ -13,7 +13,9 @@ static COLLECTIVE_OPERATOR: Mutex<Option<Box<dyn CollectiveOperator>>> = const_m
 
 pub(crate) fn set_coll(coll: Box<dyn CollectiveOperator>) {
     let mut h = COLLECTIVE_OPERATOR.lock();
-    debug_assert!(h.is_none());
+    if cfg!(test) {
+        assert!(h.is_none());
+    }
     *h = Some(coll);
 }
 

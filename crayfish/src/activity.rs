@@ -574,7 +574,7 @@ pub struct ReturnInfo {
     sub_activities: Vec<ActivityId>,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StrippedTaskItem {
     fn_id: FunctionLabel,
     place: Place, // it's dst place, request place or return place
@@ -584,10 +584,31 @@ pub struct StrippedTaskItem {
     args: Vec<u8>,
 }
 
-#[derive(Default, Debug)]
+impl fmt::Debug for StrippedTaskItem{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Stripped")
+         .field("fn_id", &self.fn_id)
+         .field("place", &self.place)
+         .field("activity_id", &self.activity_id)
+         .field("ret", &self.ret)
+         .field("waited", &self.waited)
+         .finish()
+    }
+}
+
+#[derive(Default)]
 pub struct TaskItem {
     inner: StrippedTaskItem,
     squashable: Vec<(SoBox, OrderLabel)>,
+}
+
+impl fmt::Debug for TaskItem{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TaskItem")
+         .field("inner", &self.inner)
+         .field("squashable_len", &self.squashable.len())
+         .finish()
+    }
 }
 impl TaskItem {
     pub fn is_ret(&self) -> bool {

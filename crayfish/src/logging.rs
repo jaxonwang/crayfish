@@ -4,8 +4,6 @@ extern crate log;
 use crate::meta_data;
 
 use fern::colors::{Color, ColoredLevelConfig};
-use std::env;
-use std::string::String;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 
@@ -20,11 +18,7 @@ pub fn set_global_id(id: i32) {
 pub fn setup_logger() -> Result<(), fern::InitError> {
     let colors = ColoredLevelConfig::new().info(Color::Green).debug(Color::White);
 
-    let mut pkg_name_upper = String::from(meta_data::PKG_NAME);
-    pkg_name_upper.make_ascii_uppercase();
-    let pkg_name_upper = pkg_name_upper.replace("-", "_");
-    let log_level_env_name = format!("{}_LOG_LEVEL", &pkg_name_upper);
-    let env_value = match env::var(&log_level_env_name) {
+    let env_value = match meta_data::env_with_prefix("LOG_LEVEL"){
         Ok(v) => v,
         Err(_) => "".to_string(),
     };

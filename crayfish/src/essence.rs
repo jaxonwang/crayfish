@@ -12,9 +12,10 @@ use crate::global_id::ActivityIdMethods;
 use crate::global_id::FinishIdMethods;
 use crate::logging;
 use crate::logging::*;
+use crate::meta_data;
 use crate::network::context::CommunicationContext;
-use crate::network::Rank;
 use crate::network::MessageHandler;
+use crate::network::Rank;
 use crate::runtime::init_task_item_channels;
 use crate::runtime::init_worker_task_queue;
 use crate::runtime::message_recv_callback;
@@ -83,6 +84,9 @@ where
     // logger
     logging::setup_logger().unwrap();
 
+    // print setting
+    meta_data::show_data();
+
     // the function table for task dispatch by fn_id
     runtime_meta::init_func_table();
 
@@ -138,7 +142,11 @@ where
     let hub_thread = thread::spawn(move || hub.run());
 
     // start workers
-    let rt = executor::runtime::Runtime::new().unwrap();
+    let rt = executor::runtime::Builder::new_multi_thread()
+        .worker_threads(*meta_data::NUM_CPUS)
+        .thread_name("crayfish-worker")
+        .build()
+        .unwrap();
 
     // worker loop
     let worker_loop = async move {
