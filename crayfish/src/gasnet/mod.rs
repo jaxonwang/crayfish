@@ -207,7 +207,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
 
     trace!(
-        "long recv {} bytes from {} at mem {:?} {}",
+        "long recv {} bytes from {} at mem {:p} {}",
         _nbytes,
         src,
         buf,

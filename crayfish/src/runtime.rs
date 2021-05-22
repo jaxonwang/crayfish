@@ -222,7 +222,7 @@ pub(crate) trait AbstractDistributor: Send + 'static {
 }
 
 // I guess 1 ms is the RTT for ethernet
-const MAX_BUFFER_LIFETIME: time::Duration = time::Duration::from_millis(1);
+use meta_data::MAX_BUFFER_LIFETIME as MAX_BUFFER_LIFETIME;
 // who will perfrom squash and inflate
 pub(crate) struct Distributor<S: MessageSender> {
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
@@ -255,7 +255,7 @@ where
     // check whether buffer is goint te be send will squash and send
     fn poll_one(&mut self, idx: usize) {
         let dst_buffer = &mut self.out_buffers[idx];
-        if dst_buffer.0.is_empty() || dst_buffer.1 + MAX_BUFFER_LIFETIME > time::Instant::now() {
+        if dst_buffer.0.is_empty() || dst_buffer.1 + *MAX_BUFFER_LIFETIME > time::Instant::now() {
             return; // young enough, do nothing
         }
         trace!("buffer:{} timeout. send", idx);
@@ -920,7 +920,7 @@ mod test {
             for task in a_task.iter() {
                 distrbutor.send(Box::new(_clone::<A>(task)));
             }
-            thread::sleep(MAX_BUFFER_LIFETIME);
+            thread::sleep(*MAX_BUFFER_LIFETIME);
             distrbutor.poll(); // flush all
 
             let mut received = vec![]; // since squash, order changes
