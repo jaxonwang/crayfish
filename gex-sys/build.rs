@@ -2,6 +2,10 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::env;
 use std::fs;
+use std::io;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -80,16 +84,185 @@ fn udp_conduit_flags() {
     }
 }
 
-fn mpi_conduit_flags() {
+fn mpi_conduit_flags(ctx: &BuildContext) {
     println!("cargo:rustc-link-lib=static={}", "ammpi");
+    mpi_probe::set_mpi_link_flags(ctx);
 }
 
 fn ibv_conduit_flags() {}
 
 mod mpi_probe {
     use super::*;
-    fn mpicc_path_from_gasnet(ctx: BuildContext) {
-        // let conduit_header_dir = conduit_header_dir
+    fn find_mpicc_path(mak: &Path) -> io::Result<PathBuf> {
+        let lines = BufReader::new(fs::File::open(mak).unwrap()).lines();
+        let mut mpicc_path = None;
+        for line in lines {
+            if let Ok(l) = line {
+                let blanks = &[' ', '\t'][..];
+                if l.trim_matches(blanks).starts_with("GASNET_LD_OVERRIDE") {
+                    let found = l
+                        .split('=')
+                        .last()
+                        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "missing mpicc path"))?;
+                    let found = found.trim_matches(blanks);
+                    mpicc_path = Some(PathBuf::from(found));
+                }
+            }
+        }
+
+        mpicc_path.ok_or(Error::new(
+            ErrorKind::InvalidData,
+            "GASNET_LD_OVERRIDE not found",
+        ))
+    }
+
+    pub(super) fn set_mpi_link_flags(ctx: &BuildContext) {
+        let make_fragment = ctx.conduit_include_dir.join(format!(
+            "{}-{}.mak",
+            ctx.conduit.as_ref(),
+            GASNET_THREADING_ENV
+        ));
+        let mpicc_path = find_mpicc_path(make_fragment.as_path()).unwrap();
+        // set libs from mpicc --show
+        probe_mpicc_command(mpicc_path.as_path());
+        // set from envs
+        let mpi_cflags: Option<String> = env::var("MPI_CFLAGS").ok();
+        let mpi_libs: Option<String> = env::var("MPI_LIBS").ok();
+        let flags = |s: &str| {
+            // only get flags start with -l or -L
+            let f: Vec<_> = s
+                .split(' ')
+                .filter(|s| s.starts_with("-l") || s.starts_with("-L"))
+                .collect();
+            f.join(" ")
+        };
+        mpi_cflags.map(|s| println!("cargo:rustc-flags={}", flags(&s)));
+        mpi_libs.map(|s| println!("cargo:rustc-flags={}", flags(&s)));
+    }
+
+    fn probe_mpicc_command(mpicc: &Path) {
+        let lib = match rsmpi_probe::probe(mpicc) {
+            Ok(lib) => lib,
+            Err(errs) => {
+                println!("Could not find MPI library for various reasons:\n");
+                for (i, err) in errs.iter().enumerate() {
+                    println!("Reason #{}:\n{}\n", i, err);
+                }
+                panic!();
+            }
+        };
+        for dir in &lib.lib_paths {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
+        for lib in &lib.libs {
+            println!("cargo:rustc-link-lib={}", lib);
+        }
+    }
+
+    mod rsmpi_probe {
+        // code from https://github.com/rsmpi/rsmpi/tree/master/build-probe-mpi
+        #[derive(Clone, Debug)]
+        pub struct Library {
+            /// Names of the native MPI libraries that need to be linked
+            pub libs: Vec<String>,
+            /// Search path for native MPI libraries
+            pub lib_paths: Vec<PathBuf>,
+            /// Search path for C header files
+            pub include_paths: Vec<PathBuf>,
+            /// The version of the MPI library
+            pub version: String,
+            _priv: (),
+        }
+
+        use super::*;
+        use pkg_config::Config;
+        use std::ffi::OsStr;
+        use std::{self, error::Error, path::PathBuf, process::Command};
+
+        impl From<pkg_config::Library> for Library {
+            fn from(lib: pkg_config::Library) -> Self {
+                Library {
+                    libs: lib.libs,
+                    lib_paths: lib.link_paths,
+                    include_paths: lib.include_paths,
+                    version: lib.version,
+                    _priv: (),
+                }
+            }
+        }
+
+        fn probe_via_mpicc(mpicc: &OsStr) -> std::io::Result<Library> {
+            // Capture the output of `mpicc -show`. This usually gives the actual compiler command line
+            // invoked by the `mpicc` compiler wrapper.
+            Command::new(mpicc).arg("-show").output().map(|cmd| {
+                let output =
+                    String::from_utf8(cmd.stdout).expect("mpicc output is not valid UTF-8");
+                // Collect the libraries that an MPI C program should be linked to...
+                let libs = collect_args_with_prefix(output.as_ref(), "-l");
+                // ... and the library search directories...
+                let libdirs = collect_args_with_prefix(output.as_ref(), "-L")
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect();
+                // ... and the header search directories.
+                let headerdirs = collect_args_with_prefix(output.as_ref(), "-I")
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect();
+
+                Library {
+                    libs,
+                    lib_paths: libdirs,
+                    include_paths: headerdirs,
+                    version: String::from("unknown"),
+                    _priv: (),
+                }
+            })
+        }
+
+        /// splits a command line by space and collects all arguments that start with `prefix`
+        fn collect_args_with_prefix(cmd: &str, prefix: &str) -> Vec<String> {
+            cmd.split_whitespace()
+                .filter_map(|arg| {
+                    if arg.starts_with(prefix) {
+                        Some(arg[2..].to_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        /// Probe the environment for an installed MPI library
+        pub fn probe(mpicc: &Path) -> Result<Library, Vec<Box<dyn Error>>> {
+            let mut errs = vec![];
+
+            match probe_via_mpicc(mpicc.as_ref()) {
+                Ok(lib) => return Ok(lib),
+                Err(err) => {
+                    let err: Box<dyn Error> = Box::new(err);
+                    errs.push(err)
+                }
+            }
+
+            match Config::new().cargo_metadata(false).probe("mpich") {
+                Ok(lib) => return Ok(Library::from(lib)),
+                Err(err) => {
+                    let err: Box<dyn Error> = Box::new(err);
+                    errs.push(err)
+                }
+            }
+
+            match Config::new().cargo_metadata(false).probe("openmpi") {
+                Ok(lib) => return Ok(Library::from(lib)),
+                Err(err) => {
+                    let err: Box<dyn Error> = Box::new(err);
+                    errs.push(err)
+                }
+            }
+
+            Err(errs)
+        }
     }
 }
 
@@ -144,8 +317,7 @@ pub fn main() {
     conduit_enabled.push(GasnetConduit::Ibv);
     conduit_enabled.sort(); // order by precedence
 
-    let conduit_to_use = conduit_enabled[0];
-    let ctx = BuildContext::new(conduit_to_use);
+    let ctx = BuildContext::new(conduit_enabled[0]); // use the first
 
     // config contains version info
     println!("cargo:rerun-if-changed=src/gasnet_wrapper.h");
@@ -167,10 +339,19 @@ pub fn main() {
         run_command("bootstrap", &mut bt);
     }
 
+    let append_envs = |cmd: &mut Command, key: &str, value: &str| {
+        let update = match env::var(key) {
+            Ok(v) => v + " " + value,
+            Err(_) => value.to_owned(),
+        };
+        cmd.env(key, update);
+    };
+
     // configure
     let mut cfg = Command::new("/bin/sh");
-    let envs = vec![("CFLAGS", "-fPIC"), ("CXXFLAGS", "-fPIC")];
-    cfg.envs(envs);
+    // rust enables PIC by default on linux
+    append_envs(&mut cfg, "CFLAGS", "-fPIE");
+    append_envs(&mut cfg, "CXXFLAGS", "-fPIE");
     cfg.arg(ctx.build_script_path("configure"))
         .arg(format!("--prefix={}", &ctx.out_dir.display()))
         .arg("--enable-seq")
@@ -197,6 +378,7 @@ pub fn main() {
 
     // make
     let mut mk = Command::new("make");
+    mk.arg("AM_CFLAGS=-fPIE").arg("AM_CXXFLAGS=-fPIE");
     mk.arg(GASNET_THREADING_ENV).arg("-j");
     mk.current_dir(&ctx.working_dir);
     run_command("make", &mut mk);
@@ -207,12 +389,8 @@ pub fn main() {
     is.current_dir(&ctx.working_dir);
     run_command("install", &mut is);
 
-    // common flags
-    let libgasnet = format!(
-        "gasnet-{}-{}",
-        conduit_to_use.as_ref(),
-        GASNET_THREADING_ENV
-    );
+    // common flags for crayfish linking
+    let libgasnet = format!("gasnet-{}-{}", ctx.conduit.as_ref(), GASNET_THREADING_ENV);
     println!("cargo:rustc-link-lib=static={}", libgasnet);
     println!("cargo:rustc-link-lib=dylib=m"); // specified by udp-conduit/conduit.mak
     println!(
@@ -221,9 +399,9 @@ pub fn main() {
     );
 
     // conduit flags
-    match conduit_to_use {
+    match ctx.conduit {
         GasnetConduit::Udp => udp_conduit_flags(),
-        GasnetConduit::Mpi => mpi_conduit_flags(),
+        GasnetConduit::Mpi => mpi_conduit_flags(&ctx),
         GasnetConduit::Ibv => ibv_conduit_flags(),
     }
 
