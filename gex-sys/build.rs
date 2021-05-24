@@ -15,21 +15,32 @@ pub fn run_command(which: &str, cmd: &mut Command) {
     assert!(status.success(), "{}", which);
 }
 
-fn contains_file(path: &Path, filename: &str) -> bool {
-    assert!(path.is_dir());
-    let mut contains = false;
-    for f in path.read_dir().unwrap() {
-        if f.unwrap().file_name().to_str().unwrap() == filename {
-            contains = true;
-        }
-    }
-    contains
-}
-
 const GASNET_THREADING_ENV: &str = "seq";
 const GASNET_CONDUIT_LIST: [&str; 6] = ["ibv", "mpi", "udp", "smp", "ucx", "aries"];
 const GASNET_WRAPPER: &str = "gasnet_wrapper";
 const GASNET_LIBAMUDP: &str = "amudp";
+const REBUILD_IF_ENVS_CHANGE: [&str; 17] = [
+// mpi flags
+    "MPI_CC",
+    "MPI_CFLAGS",
+    "MPI_LIBS",
+// ibv flags
+    "IBV_HOME",
+    "IBV_CFLAGS",
+    "IBV_LIBS",
+    "IBV_LDFLAGS",
+    "FH_CFLAGS",
+// common C/CXX flags
+    "CC",      
+    "CFLAGS",  
+    "LDFLAGS", 
+    "LIBS",    
+    "CPPFLAGS",
+    "CPP",     
+    "CXX",     
+    "CXXFLAGS",
+    "CXXCPP",  
+];
 
 #[allow(dead_code)]
 #[derive(Ord, PartialOrd, PartialEq, Eq, Copy, Clone)]
@@ -90,7 +101,13 @@ pub fn main() {
     let conduit_to_use = conduit_enabled[0];
 
     // config contains version info
-    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/gasnet_wrapper.h");
+    println!("cargo:rerun-if-changed=src/gasnet_wrapper.c");
+    println!("cargo:rerun-if-changed=gasnet");
+	for env in REBUILD_IF_ENVS_CHANGE.iter(){
+		println!("cargo:rerun-if-env-changed={}", env);
+	}
+	
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir);
@@ -151,13 +168,7 @@ pub fn main() {
     let mut is = Command::new("make");
     is.arg("install");
     is.current_dir(&working_dir);
-    let out_include_dir = out_dir.join("include");
-    if !out_include_dir.is_dir() || !contains_file(&out_include_dir, "gasnet.h") {
-        // only install once. That could cause problem. But if installed, it
-        // changes some new timestamp, forcing the cargo rebuild.
-        // TODO: doing that will cause compiling twice from the first build
-        run_command("install", &mut is);
-    }
+    run_command("install", &mut is);
 
     // common flags
     let libgasnet = format!(
@@ -202,7 +213,6 @@ pub fn main() {
     }
     let bindings = bindgen::Builder::default()
         .header(format!("src/{}.h", GASNET_WRAPPER))
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .clang_args(clang_args.iter())
         .allowlist_function("gex_.*")
         .allowlist_function("gasnet_.*")
