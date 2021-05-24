@@ -1,5 +1,5 @@
-#define GASNET_PAR
-#include <gasnet.h>
+#define GASNET_SEQ
+#include <gasnetex.h>
 #include <gasnet_coll.h>
 gex_Flags_t gex_flag_uses_gasnet1();
 gex_Rank_t gex_rank_invalid();
@@ -41,8 +41,6 @@ gex_EC_t gex_ec_put();
 gex_EC_t gex_ec_am();
 gex_EC_t gex_ec_lc();
 gex_EC_t gex_ec_rmw();
-void gasnet_QueryGexObjects_Wrap(gex_Client_t *client_p, gex_EP_t *endpoint_p,
-                                 gex_TM_t *tm_p, gex_Segment_t *segment_p);
 gex_Rank_t gex_System_QueryJobRank_Wrap(void);
 gex_Rank_t gex_System_QueryJobSize_Wrap(void);
 int gex_System_GetVerboseErrors_Wrap();

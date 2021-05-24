@@ -1,8 +1,10 @@
+use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::env;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::fs;
 
 extern crate bindgen;
 extern crate cc;
@@ -24,14 +26,68 @@ fn contains_file(path: &Path, filename: &str) -> bool {
     contains
 }
 
-const GASNET_CONDUIT: &str = "udp";
-const GASNET_THREADING_ENV: &str = "par";
-const GASNET_CONDUIT_LIST: [&str; 6] = ["udp", "mpi", "smp", "ucx", "ibv", "aries"];
+const GASNET_THREADING_ENV: &str = "seq";
+const GASNET_CONDUIT_LIST: [&str; 6] = ["ibv", "mpi", "udp", "smp", "ucx", "aries"];
 const GASNET_WRAPPER: &str = "gasnet_wrapper";
 const GASNET_LIBAMUDP: &str = "amudp";
 
+#[allow(dead_code)]
+#[derive(Ord, PartialOrd, PartialEq, Eq, Copy, Clone)]
+enum GasnetConduit {
+    Ibv = 0,
+    Mpi = 1,
+    Udp = 2,
+}
+
+impl AsRef<str> for GasnetConduit {
+    fn as_ref(&self) -> &str {
+        GASNET_CONDUIT_LIST[*self as usize]
+    }
+}
+
+impl TryFrom<usize> for GasnetConduit {
+    type Error = ();
+
+    fn try_from(v: usize) -> Result<Self, Self::Error> {
+        match v {
+            x if x == GasnetConduit::Ibv as usize => Ok(GasnetConduit::Ibv),
+            x if x == GasnetConduit::Mpi as usize => Ok(GasnetConduit::Mpi),
+            x if x == GasnetConduit::Udp as usize => Ok(GasnetConduit::Udp),
+            _ => Err(()),
+        }
+    }
+}
+
+fn udp_conduit_flags() {
+    println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=dylib=c++");
+    } else if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    } else {
+        panic!("platform unsupported")
+    }
+}
+
+fn mpi_conduit_flags() {
+    println!("cargo:rustc-link-lib=static={}", "ammpi");
+}
+
+fn ibv_conduit_flags() {}
+
 pub fn main() {
     // TODO: cleanup everythin before install
+
+    let mut conduit_enabled = vec![];
+    #[cfg(feature = "udp")]
+    conduit_enabled.push(GasnetConduit::Udp);
+    #[cfg(feature = "mpi")]
+    conduit_enabled.push(GasnetConduit::Mpi);
+    #[cfg(feature = "ibv")]
+    conduit_enabled.push(GasnetConduit::Ibv);
+    conduit_enabled.sort(); // order by precedence
+
+    let conduit_to_use = conduit_enabled[0];
 
     // config contains version info
     println!("cargo:rerun-if-changed=build.rs");
@@ -40,9 +96,9 @@ pub fn main() {
     let out_dir = Path::new(&out_dir);
     let libdir = out_dir.join("lib");
     let gasnet_dir = fs::canonicalize("gasnet").unwrap();
-    let abs_path = |s:&str| gasnet_dir.join(s);
+    let abs_path = |s: &str| gasnet_dir.join(s);
     let working_dir = out_dir.join("gasnet");
-    if !working_dir.exists(){
+    if !working_dir.exists() {
         fs::create_dir(&working_dir).unwrap();
     }
 
@@ -63,16 +119,23 @@ pub fn main() {
     cfg.envs(envs);
     cfg.arg(abs_path("configure"))
         .arg(format!("--prefix={}", out_dir.display()))
-        .arg("--enable-par")
+        .arg("--enable-seq")
         .arg("--disable-parsync")
-        .arg("--disable-seq");
+        .arg("--disable-par");
     #[cfg(debug_assertions)]
     cfg.arg("--enable-debug");
-    for c in GASNET_CONDUIT_LIST.iter() {
-        if &GASNET_CONDUIT == c {
-            cfg.arg(format!("--enable-{}", c));
-        } else {
-            cfg.arg(format!("--disable-{}", c));
+    for (i, c) in GASNET_CONDUIT_LIST.iter().enumerate() {
+        match i.try_into() {
+            Ok(conduit) => {
+                if conduit_enabled.contains(&conduit) {
+                    cfg.arg(format!("--enable-{}", c));
+                } else {
+                    cfg.arg(format!("--disable-{}", c));
+                }
+            }
+            Err(_) => {
+                cfg.arg(format!("--disable-{}", c));
+            }
         }
     }
     cfg.current_dir(&working_dir);
@@ -96,20 +159,24 @@ pub fn main() {
         run_command("install", &mut is);
     }
 
-    // choose parallel build library
-    let libgasnet = format!("gasnet-{}-{}", GASNET_CONDUIT, GASNET_THREADING_ENV);
+    // common flags
+    let libgasnet = format!(
+        "gasnet-{}-{}",
+        conduit_to_use.as_ref(),
+        GASNET_THREADING_ENV
+    );
     println!("cargo:rustc-link-lib=static={}", libgasnet);
-    println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=dylib=c++");
-    } else if cfg!(target_os = "linux") {
-        println!("cargo:rustc-link-lib=dylib=stdc++");
-    } else {
-        panic!("platform unsupported")
-    }
+    println!("cargo:rustc-link-lib=dylib=m"); // specified by udp-conduit/conduit.mak
     println!("cargo:rustc-link-search=native={}", libdir.display());
 
-    let conduit_dir = format!("include/{}-conduit", GASNET_CONDUIT);
+    // conduit flags
+    match conduit_to_use {
+        GasnetConduit::Udp => udp_conduit_flags(),
+        GasnetConduit::Mpi => mpi_conduit_flags(),
+        GasnetConduit::Ibv => ibv_conduit_flags(),
+    }
+
+    let conduit_dir = format!("include/{}-conduit", conduit_to_use.as_ref());
     let headers: Vec<&str> = vec![&conduit_dir, "include"];
     let headers: Vec<PathBuf> = headers.iter().map(|dir| out_dir.join(dir)).collect();
 
@@ -137,6 +204,10 @@ pub fn main() {
         .header(format!("src/{}.h", GASNET_WRAPPER))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .clang_args(clang_args.iter())
+        .allowlist_function("gex_.*")
+        .allowlist_function("gasnet_.*")
+        .allowlist_var("GEX_.*")
+        .allowlist_var("GASNET_.*")
         .generate()
         .expect("Unable to generate bindings");
     bindings.write_to_file(out_dir.join("bindings.rs")).unwrap();

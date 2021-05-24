@@ -29,3 +29,8 @@ parking_lot = "0.11"
 rand = { version = "0.8", features = ["std_rng"]}
 
 [lib]
+
+[features]
+net-udp = ["gex-sys/udp"]
+net-mpi = ["gex-sys/mpi"]
+net-ibv = ["gex-sys/ibv"]
