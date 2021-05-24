@@ -190,12 +190,12 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     _nbytes: size_t,
-    arg0: gasnet_handlerarg_t,
-    arg1: gasnet_handlerarg_t,
-    arg2: gasnet_handlerarg_t,
-    arg3: gasnet_handlerarg_t,
-    arg4: gasnet_handlerarg_t,
-    arg5: gasnet_handlerarg_t,
+    arg0: gex_AM_Arg_t,
+    arg1: gex_AM_Arg_t,
+    arg2: gex_AM_Arg_t,
+    arg3: gex_AM_Arg_t,
+    arg4: gex_AM_Arg_t,
+    arg5: gex_AM_Arg_t,
 ) {
     let src = TK::from_token(token);
     let src_idx = src.as_usize();
@@ -252,12 +252,12 @@ extern "C" fn recv_long<T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
-    a0: gasnet_handlerarg_t,
-    a1: gasnet_handlerarg_t,
-    a2: gasnet_handlerarg_t,
-    a3: gasnet_handlerarg_t,
-    a4: gasnet_handlerarg_t,
-    a5: gasnet_handlerarg_t,
+    a0: gex_AM_Arg_t,
+    a1: gex_AM_Arg_t,
+    a2: gex_AM_Arg_t,
+    a3: gex_AM_Arg_t,
+    a4: gex_AM_Arg_t,
+    a5: gex_AM_Arg_t,
 ) {
     struct Getter;
     impl RankFromToken for Getter {

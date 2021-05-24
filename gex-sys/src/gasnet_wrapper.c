@@ -59,11 +59,6 @@ extern gex_EC_t gex_ec_put() { return GEX_EC_PUT; }
 extern gex_EC_t gex_ec_am() { return GEX_EC_AM; }
 extern gex_EC_t gex_ec_lc() { return GEX_EC_LC; }
 extern gex_EC_t gex_ec_rmw() { return GEX_EC_RMW; }
-extern void gasnet_QueryGexObjects_Wrap(gex_Client_t *client_p,
-                                        gex_EP_t *endpoint_p, gex_TM_t *tm_p,
-                                        gex_Segment_t *segment_p) {
-  gasnet_QueryGexObjects(client_p, endpoint_p, tm_p, segment_p);
-}
 extern gex_Rank_t gex_System_QueryJobRank_Wrap(void) {
   return gex_System_QueryJobRank();
 }
