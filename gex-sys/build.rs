@@ -104,7 +104,12 @@ mod mpi_probe {
                         .split('=')
                         .last()
                         .ok_or_else(|| Error::new(ErrorKind::InvalidData, "missing mpicc path"))?;
-                    let found = found.trim_matches(blanks);
+                    // allow MPI_CC="mpicc -flags"
+                    let found = found
+                        .split(' ')
+                        .filter(|s| !s.trim_matches(blanks).is_empty())
+                        .nth(0)
+                        .unwrap();
                     mpicc_path = Some(PathBuf::from(found));
                 }
             }
@@ -339,19 +344,8 @@ pub fn main() {
         run_command("bootstrap", &mut bt);
     }
 
-    let append_envs = |cmd: &mut Command, key: &str, value: &str| {
-        let update = match env::var(key) {
-            Ok(v) => v + " " + value,
-            Err(_) => value.to_owned(),
-        };
-        cmd.env(key, update);
-    };
-
     // configure
     let mut cfg = Command::new("/bin/sh");
-    // rust enables PIC by default on linux
-    append_envs(&mut cfg, "CFLAGS", "-fPIE");
-    append_envs(&mut cfg, "CXXFLAGS", "-fPIE");
     cfg.arg(ctx.build_script_path("configure"))
         .arg(format!("--prefix={}", &ctx.out_dir.display()))
         .arg("--enable-seq")
@@ -378,9 +372,12 @@ pub fn main() {
 
     // make
     let mut mk = Command::new("make");
-    mk.arg("AM_CFLAGS=-fPIE").arg("AM_CXXFLAGS=-fPIE");
-    mk.arg(GASNET_THREADING_ENV).arg("-j");
-    mk.current_dir(&ctx.working_dir);
+    // rust enables PIC by default on linux
+    mk.arg("MANUAL_CFLAGS=-fPIE")
+    .arg("MANUAL_CXXFLAGS=-fPIE")
+    .arg("MANUAL_MPICFLAGS=-fPIE")
+    .arg(GASNET_THREADING_ENV)
+    .current_dir(&ctx.working_dir);
     run_command("make", &mut mk);
 
     // install
