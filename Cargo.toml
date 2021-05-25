@@ -1,8 +1,9 @@
 [workspace]
 
 members = [
+  "gex-sys",
+  "gex-sys/parse_mak",
   "crayfish",
   "crayfish-macros",
-  "gex-sys",
   "crayfish-examples"
 ]
