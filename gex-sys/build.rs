@@ -316,7 +316,7 @@ pub fn main() {
         .arg("--disable-par");
     #[cfg(debug_assertions)]
     cfg.arg("--enable-debug");
-    for c in GASNET_CONDUIT_LIST.iter() { // only 
+    for c in GASNET_CONDUIT_LIST.iter() { // only enable one
         if &ctx.conduit.as_ref() == c {
             cfg.arg(format!("--enable-{}", c));
         } else {
