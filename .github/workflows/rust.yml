@@ -21,9 +21,7 @@ jobs:
         run: |
           git submodule sync --recursive
           git submodule update --init --force --recursive
-      - name: Build
-        run: cargo build --all-targets -vv
-      - name: Run tests
+      - name: Build && Run tests
         run: cargo test --verbose
       - name: Run examples
         run: |
