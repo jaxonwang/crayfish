@@ -1,17 +1,14 @@
+use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::env;
 use std::fs;
-use std::io;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
 extern crate bindgen;
 extern crate cc;
+extern crate parse_mak;
 
 pub fn run_command(which: &str, cmd: &mut Command) {
     let msg = format!("Failed to execute {:?}", cmd);
@@ -22,7 +19,6 @@ pub fn run_command(which: &str, cmd: &mut Command) {
 const GASNET_THREADING_ENV: &str = "seq";
 const GASNET_CONDUIT_LIST: [&str; 6] = ["ibv", "mpi", "udp", "smp", "ucx", "aries"];
 const GASNET_WRAPPER: &str = "gasnet_wrapper";
-const GASNET_LIBAMUDP: &str = "amudp";
 const REBUILD_IF_ENVS_CHANGE: [&str; 17] = [
     // mpi flags
     "MPI_CC",
@@ -74,7 +70,6 @@ impl TryFrom<usize> for GasnetConduit {
 }
 
 fn udp_conduit_flags() {
-    println!("cargo:rustc-link-lib=static={}", GASNET_LIBAMUDP);
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
     } else if cfg!(target_os = "linux") {
@@ -85,7 +80,6 @@ fn udp_conduit_flags() {
 }
 
 fn mpi_conduit_flags(ctx: &BuildContext) {
-    println!("cargo:rustc-link-lib=static={}", "ammpi");
     mpi_probe::set_mpi_link_flags(ctx);
 }
 
@@ -93,56 +87,11 @@ fn ibv_conduit_flags() {}
 
 mod mpi_probe {
     use super::*;
-    fn find_mpicc_path(mak: &Path) -> io::Result<PathBuf> {
-        let lines = BufReader::new(fs::File::open(mak).unwrap()).lines();
-        let mut mpicc_path = None;
-        for line in lines {
-            if let Ok(l) = line {
-                let blanks = &[' ', '\t'][..];
-                if l.trim_matches(blanks).starts_with("GASNET_LD_OVERRIDE") {
-                    let found = l
-                        .split('=')
-                        .last()
-                        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "missing mpicc path"))?;
-                    // allow MPI_CC="mpicc -flags"
-                    let found = found
-                        .split(' ')
-                        .filter(|s| !s.trim_matches(blanks).is_empty())
-                        .nth(0)
-                        .unwrap();
-                    mpicc_path = Some(PathBuf::from(found));
-                }
-            }
-        }
-
-        mpicc_path.ok_or(Error::new(
-            ErrorKind::InvalidData,
-            "GASNET_LD_OVERRIDE not found",
-        ))
-    }
 
     pub(super) fn set_mpi_link_flags(ctx: &BuildContext) {
-        let make_fragment = ctx.conduit_include_dir.join(format!(
-            "{}-{}.mak",
-            ctx.conduit.as_ref(),
-            GASNET_THREADING_ENV
-        ));
-        let mpicc_path = find_mpicc_path(make_fragment.as_path()).unwrap();
+        let mpicc_path = &Path::new(&ctx.make_vars["GASNET_LD_OVERRIDE"]);
         // set libs from mpicc --show
-        probe_mpicc_command(mpicc_path.as_path());
-        // set from envs
-        let mpi_cflags: Option<String> = env::var("MPI_CFLAGS").ok();
-        let mpi_libs: Option<String> = env::var("MPI_LIBS").ok();
-        let flags = |s: &str| {
-            // only get flags start with -l or -L
-            let f: Vec<_> = s
-                .split(' ')
-                .filter(|s| s.starts_with("-l") || s.starts_with("-L"))
-                .collect();
-            f.join(" ")
-        };
-        mpi_cflags.map(|s| println!("cargo:rustc-flags={}", flags(&s)));
-        mpi_libs.map(|s| println!("cargo:rustc-flags={}", flags(&s)));
+        probe_mpicc_command(mpicc_path);
     }
 
     fn probe_mpicc_command(mpicc: &Path) {
@@ -156,12 +105,15 @@ mod mpi_probe {
                 panic!();
             }
         };
+
+        let mut ld_flags = vec![];
         for dir in &lib.lib_paths {
-            println!("cargo:rustc-link-search=native={}", dir.display());
+            ld_flags.push(format!("-L{}", dir.display()));
         }
         for lib in &lib.libs {
-            println!("cargo:rustc-link-lib={}", lib);
+            ld_flags.push(format!("-l{}", lib));
         }
+        println!("cargo:rustc-flags={}", ld_flags.join(" "));
     }
 
     mod rsmpi_probe {
@@ -279,6 +231,7 @@ struct BuildContext {
     gasnet_include_dir: PathBuf,  // buildpath/out/include
     conduit_include_dir: PathBuf, // buildpath/out/include/udp-conduit
     conduit: GasnetConduit,
+    make_vars: HashMap<String, String>,
 }
 
 impl BuildContext {
@@ -302,11 +255,21 @@ impl BuildContext {
             gasnet_src_dir,
             conduit_include_dir,
             conduit,
+            make_vars: HashMap::new(),
         }
     }
 
     fn build_script_path(&self, script_name: impl AsRef<Path>) -> PathBuf {
         self.gasnet_src_dir.join(script_name)
+    }
+
+    fn parse_gasnet_makefile(&mut self) {
+        let mk_file = self.conduit_include_dir.join(format!(
+            "{}-{}.mak",
+            self.conduit.as_ref(),
+            GASNET_THREADING_ENV
+        ));
+        self.make_vars = parse_mak::parse_makefile(mk_file.as_path());
     }
 }
 
@@ -322,7 +285,7 @@ pub fn main() {
     conduit_enabled.push(GasnetConduit::Ibv);
     conduit_enabled.sort(); // order by precedence
 
-    let ctx = BuildContext::new(conduit_enabled[0]); // use the first
+    let mut ctx = BuildContext::new(conduit_enabled[0]); // use the first
 
     // config contains version info
     println!("cargo:rerun-if-changed=src/gasnet_wrapper.h");
@@ -353,18 +316,11 @@ pub fn main() {
         .arg("--disable-par");
     #[cfg(debug_assertions)]
     cfg.arg("--enable-debug");
-    for (i, c) in GASNET_CONDUIT_LIST.iter().enumerate() {
-        match i.try_into() {
-            Ok(conduit) => {
-                if conduit_enabled.contains(&conduit) {
-                    cfg.arg(format!("--enable-{}", c));
-                } else {
-                    cfg.arg(format!("--disable-{}", c));
-                }
-            }
-            Err(_) => {
-                cfg.arg(format!("--disable-{}", c));
-            }
+    for c in GASNET_CONDUIT_LIST.iter() { // only 
+        if &ctx.conduit.as_ref() == c {
+            cfg.arg(format!("--enable-{}", c));
+        } else {
+            cfg.arg(format!("--disable-{}", c));
         }
     }
     cfg.current_dir(&ctx.working_dir);
@@ -374,10 +330,10 @@ pub fn main() {
     let mut mk = Command::new("make");
     // rust enables PIC by default on linux
     mk.arg("MANUAL_CFLAGS=-fPIE")
-    .arg("MANUAL_CXXFLAGS=-fPIE")
-    .arg("MANUAL_MPICFLAGS=-fPIE")
-    .arg(GASNET_THREADING_ENV)
-    .current_dir(&ctx.working_dir);
+        .arg("MANUAL_CXXFLAGS=-fPIE")
+        .arg("MANUAL_MPICFLAGS=-fPIE")
+        .arg(GASNET_THREADING_ENV)
+        .current_dir(&ctx.working_dir);
     run_command("make", &mut mk);
 
     // install
@@ -387,13 +343,16 @@ pub fn main() {
     run_command("install", &mut is);
 
     // common flags for crayfish linking
-    let libgasnet = format!("gasnet-{}-{}", ctx.conduit.as_ref(), GASNET_THREADING_ENV);
-    println!("cargo:rustc-link-lib=static={}", libgasnet);
-    println!("cargo:rustc-link-lib=dylib=m"); // specified by udp-conduit/conduit.mak
+    ctx.parse_gasnet_makefile();
     println!(
         "cargo:rustc-link-search=native={}",
         ctx.gasnet_lib_dir.display()
     );
+
+    let ld_flags = ctx.make_vars["GASNET_LIBS"].clone() + &ctx.make_vars["GASNET_LDFLAGS"];
+    // filter non ld flags
+    let ld_flags = parse_mak::filter_ld_flags(&ld_flags).join(" ");
+    println!("cargo:rustc-flags={}", ld_flags);
 
     // conduit flags
     match ctx.conduit {
@@ -435,13 +394,4 @@ pub fn main() {
     bindings
         .write_to_file(ctx.out_dir.join("bindings.rs"))
         .unwrap();
-}
-
-#[cfg(test)]
-mod test {
-    #[test]
-    pub fn test_contains_file() {
-        assert_eq! {contains_file(Path::from("."), "build.rs"), true};
-        assert_eq! {contains_file(Path::from("."), "nobuild.rs"), false};
-    }
 }

@@ -13,6 +13,7 @@ license = "BSD-3-Clause"
 bindgen = { version="0.58.1", features=["runtime"], default-features = false}
 cc = "1.0.67"
 pkg-config = "0.3"
+parse_mak = {path = "parse_mak"}
 
 [features]
 default = ["udp"]
