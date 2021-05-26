@@ -83,7 +83,14 @@ fn mpi_conduit_flags(ctx: &BuildContext) {
     mpi_probe::set_mpi_link_flags(ctx);
 }
 
-fn ibv_conduit_flags() {}
+fn ibv_conduit_flags(ctx: &BuildContext) {
+    // check mpi spawner enabled or not
+    match ctx.make_vars["GASNET_SPAWNER_MPI"].as_str(){
+        "1" => mpi_probe::set_mpi_link_flags(ctx),
+        "0" => (),
+        _ => panic!("bad GASNET_SPAWNER_MPI")
+    }
+}
 
 mod mpi_probe {
     use super::*;
@@ -358,7 +365,7 @@ pub fn main() {
     match ctx.conduit {
         GasnetConduit::Udp => udp_conduit_flags(),
         GasnetConduit::Mpi => mpi_conduit_flags(&ctx),
-        GasnetConduit::Ibv => ibv_conduit_flags(),
+        GasnetConduit::Ibv => ibv_conduit_flags(&ctx),
     }
 
     // compile wrapper
