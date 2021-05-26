@@ -21,10 +21,8 @@ jobs:
         run: |
           git submodule sync --recursive
           git submodule update --init --force --recursive
-      - name: Build
-        run: cargo build --all-targets -vv
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Build && Run tests
+        run: cargo test -vv
       - name: Run examples
         run: |
           GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
@@ -51,3 +49,21 @@ jobs:
         run: |
           valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
           valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
+
+  test-build:
+    name: test-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        run: rustup update stable
+      - name: Submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive
+      - name: Install MPICH & Ibverbs
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y mpich libibverbs-dev
+      - name: Build Ibv
+        run: cd crayfish-test/build-test/build-ibv && cargo build -vv
