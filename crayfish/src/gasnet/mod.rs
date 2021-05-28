@@ -14,6 +14,7 @@ use std::slice;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
+use std::time;
 
 extern crate gex_sys;
 extern crate libc;
@@ -225,6 +226,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     if message_len <= chunk_size {
         let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
+        info!("receive message of len {} from {}", message_len, src);
         debug_assert!(offset == 0);
         call_handler(buf);
         TK::reply_short(token);
@@ -460,8 +462,11 @@ where
         use mpsc::TryRecvError::*;
         // drop sender, otherwise the channel will never be closed
         self.op_sender = None;
+
         // message loop
+        let mut sleep_us = time::Duration::from_micros(1);
         loop {
+            let mut nothing = false;
             gasnet_ampoll();
             self.poll_barrier();
             match self.op_receiver.try_recv() {
@@ -470,8 +475,20 @@ where
                 Ok(NetworkOperation::Broadcast(root, data, len, notify)) => {
                     self.broadcast(root, data, len, notify)
                 }
-                Err(Empty) => continue,     // TODO: backoff?
+                Err(Empty) => {
+                    nothing = true;
+                }
                 Err(Disconnected) => break, // the upper layer stop fist
+            }
+
+            if nothing {
+                std::thread::sleep(sleep_us);
+                // max sleep time should not be too large otherwise timeout
+                if sleep_us < time::Duration::from_millis(1) {
+                    sleep_us *= 2;
+                }
+            } else {
+                sleep_us = time::Duration::from_micros(1);
             }
         }
 
@@ -498,7 +515,7 @@ where
 
     // interrupt safe, no malloc
     pub fn send(&mut self, dst: Rank, message: &[u8]) {
-        trace!("sending to {} with message len {}", dst, message.len());
+        debug!("sending to {} with message len {}", dst, message.len());
         // NOTE: not thread safe!
         if message.len() < self.max_global_medium_request_len {
             unsafe {
@@ -656,18 +673,14 @@ impl CollectiveOperator for GexCollectiveOperator {
         self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
         rx.recv().unwrap();
     }
-    
-    fn broadcast(&self, root: Rank, bytes:*mut u8, size: usize){
+
+    fn broadcast(&self, root: Rank, bytes: *mut u8, size: usize) {
         let (tx, rx) = mpsc::sync_channel(1);
-        self.sender.send(NetworkOperation::Broadcast(
-            root,
-            bytes,
-            size,
-            tx,
-        )).unwrap();
+        self.sender
+            .send(NetworkOperation::Broadcast(root, bytes, size, tx))
+            .unwrap();
         rx.recv().unwrap();
     }
-
 }
 
 #[cfg(test)]

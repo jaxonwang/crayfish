@@ -1,11 +1,11 @@
 use crate::activity::AbstractSquashBuffer;
 use crate::activity::AbstractSquashBufferFactory;
 use crate::activity::ActivityId;
-use crate::args::RemoteSend;
 use crate::activity::StaticSquashBufferFactory;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemBuilder;
 use crate::activity::TaskItemExtracter;
+use crate::args::RemoteSend;
 use crate::finish::CallingTree;
 use crate::finish::FinishId;
 use crate::global_id;
@@ -222,7 +222,7 @@ pub(crate) trait AbstractDistributor: Send + 'static {
 }
 
 // I guess 1 ms is the RTT for ethernet
-use meta_data::MAX_BUFFER_LIFETIME as MAX_BUFFER_LIFETIME;
+use meta_data::MAX_BUFFER_LIFETIME;
 // who will perfrom squash and inflate
 pub(crate) struct Distributor<S: MessageSender> {
     out_buffers: Vec<(Box<dyn AbstractSquashBuffer>, time::Instant)>,
@@ -482,18 +482,25 @@ where
     }
 
     pub fn run(&mut self) {
+        let mut sleep_us = time::Duration::from_micros(1);
         while !self.stop.load(Ordering::Acquire) {
-            // TODO: backoff
+            let mut got_something = false;
+
             // receive task item
             for i in 0..self.task_item_receivers.len() {
                 let mut to_remove = false;
-                if let Some(r) = self.task_item_receivers[i].as_ref() {
+                // keep reading one util nothing left
+                while let Some(r) = self.task_item_receivers[i].as_ref() {
                     match r.try_recv() {
-                        Ok(item) => self.handle_item(item),
-                        Err(mpsc::TryRecvError::Empty) => (),
+                        Ok(item) => {
+                            got_something = true;
+                            self.handle_item(item);
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
                             debug!("worker:{} task_item_receiver closed", i);
                             to_remove = true;
+                            break;
                         }
                     }
                 }
@@ -504,13 +511,17 @@ where
             // reveive wait request
             for i in 0..self.wait_request_receivers.len() {
                 let mut to_remove = false;
-                if let Some(r) = self.wait_request_receivers[i].as_ref() {
+                while let Some(r) = self.wait_request_receivers[i].as_ref() {
                     match r.try_recv() {
-                        Ok(wr) => self.handle_wait_request(*wr),
-                        Err(mpsc::TryRecvError::Empty) => (),
+                        Ok(wr) => {
+                            got_something = true;
+                            self.handle_wait_request(*wr);
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
                             debug!("worker:{} wait_request_channel closed", i);
                             to_remove = true;
+                            break;
                         }
                     }
                 }
@@ -523,10 +534,22 @@ where
             while let Some(item) = self.distributor.recv() {
                 trace!("got item from remote {:?}", item);
                 self.handle_item(item);
+                got_something = true;
             }
 
             // send pending buffers
             self.distributor.poll();
+
+            // back off
+            if got_something {
+                // reset
+                sleep_us = time::Duration::from_micros(1);
+            } else{
+                std::thread::sleep(sleep_us);
+                if sleep_us < time::Duration::from_millis(1) {
+                    sleep_us *= 2;
+                }
+            }
         }
         debug!("Execution Hub shuts down");
     }
