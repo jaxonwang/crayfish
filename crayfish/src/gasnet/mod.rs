@@ -226,7 +226,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     if message_len <= chunk_size {
         let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
-        info!("receive message of len {} from {}", message_len, src);
+        debug!("receive message of len {} from {}", message_len, src);
         debug_assert!(offset == 0);
         call_handler(buf);
         TK::reply_short(token);
