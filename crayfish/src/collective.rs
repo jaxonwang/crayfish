@@ -5,6 +5,9 @@ use crate::network;
 use crate::network::CollectiveOperator;
 use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
+use futures::future::BoxFuture;
+use futures::future::FutureExt;
+use futures::Future;
 use parking_lot::const_mutex;
 use parking_lot::Mutex;
 use std::cell::Cell;
@@ -54,7 +57,10 @@ where
     f(coll)
 }
 
-pub fn broadcast_copy<T: Copy + 'static + Send>(root: Place, value: &mut T) {
+pub fn broadcast_copy<T: Copy + 'static + Send>(
+    root: Place,
+    value: &mut T,
+) -> impl Future<Output = ()> {
     let type_size = std::mem::size_of::<T>();
     perform_collective(|coll| {
         coll.broadcast(
@@ -63,9 +69,10 @@ pub fn broadcast_copy<T: Copy + 'static + Send>(root: Place, value: &mut T) {
             type_size,
         )
     })
+    .map(|a| a.unwrap())
 }
 
-pub fn broadcast<T: RemoteSend>(root: Place, value: &mut T) {
+pub fn broadcast<'a, T: RemoteSend>(root: Place, value: &'a mut T) -> BoxFuture<'a, ()> {
     // broadcast size first. Then perform value broadcast
     let mut bytes: Vec<u8> = vec![];
     let mut serialized_len = 0;
@@ -74,13 +81,14 @@ pub fn broadcast<T: RemoteSend>(root: Place, value: &mut T) {
         serialize_into(&mut bytes, value).unwrap();
         serialized_len = bytes.len();
     }
-    broadcast_copy(root, &mut serialized_len);
+    // TODO: use another thread for non blocking first phase broadcast?
+    futures::executor::block_on(broadcast_copy(root, &mut serialized_len));
     // now serialized len is the same
     if here != root {
         bytes = vec![0u8; serialized_len];
     }
 
-    perform_collective(|coll| {
+    let f = perform_collective(|coll| {
         coll.broadcast(
             network::Rank::from_place(root),
             bytes.as_mut_ptr(),
@@ -88,25 +96,21 @@ pub fn broadcast<T: RemoteSend>(root: Place, value: &mut T) {
         )
     });
 
-    if here != root {
-        *value = deserialize_from(&bytes[..]).unwrap();
+    async move {
+        f.await.unwrap();
+        if here != root {
+            *value = deserialize_from(&bytes[..]).unwrap();
+        }
     }
+    .boxed()
 }
 
-pub fn barrier() {
-    perform_collective(|c| c.barrier())
-}
-
-pub fn barrier_notify() {
-    perform_collective(|c| c.barrier_notify())
-}
-
-pub fn barrier_wait() {
-    perform_collective(|c| c.barrier_wait())
-}
-
-pub fn barrier_try() -> bool {
-    perform_collective(|c| c.barrier_try())
+pub fn barrier() -> impl Future<Output = ()> {
+    let f = perform_collective(|c| c.barrier());
+    f.map(|r| {
+        r.unwrap();
+        perform_collective(|c| c.barrier_done());
+    })
 }
 
 #[cfg(test)]
@@ -138,22 +142,25 @@ mod test {
     }
 
     struct MockCollOp {}
+    use futures::channel::oneshot;
 
     impl CollectiveOperator for MockCollOp {
-        fn barrier(&self) {}
-        fn barrier_notify(&mut self) {}
-        fn barrier_wait(&mut self) {}
-        fn barrier_try(&mut self) -> bool {
-            true
+        fn barrier(&mut self) -> oneshot::Receiver<()> {
+            let (tx, rx) = oneshot::channel();
+            tx.send(()).unwrap();
+            rx
         }
-        fn broadcast(&self, _: Rank, _: *mut u8, _: usize) {}
+        fn barrier_done(&mut self) {}
+
+        fn broadcast(&self, _root: Rank, _bytes: *mut u8, _size: usize) -> oneshot::Receiver<()> {
+            let (tx, rx) = oneshot::channel();
+            tx.send(()).unwrap();
+            rx
+        }
     }
 
     fn do_coll() {
-        barrier();
-        barrier_notify();
-        barrier_wait();
-        barrier_try();
+        futures::executor::block_on(barrier());
     }
 
     #[test]

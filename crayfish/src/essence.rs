@@ -27,6 +27,7 @@ use crate::runtime::Distributor;
 use crate::runtime::ExecutionHub;
 use crate::runtime_meta;
 use futures::future::BoxFuture;
+use futures::future::FutureExt;
 use futures::Future;
 use std::thread;
 
@@ -166,8 +167,8 @@ where
     // should not perform any network before init done
     init_done_r.recv().unwrap();
     // wait till all finishes;
-    let coll = collective::take_coll();
-    coll.barrier();
+    let mut coll = collective::take_coll();
+    rt.block_on(coll.barrier().map(|r| r.unwrap()));
     trigger.stop();
     drop(coll); // drop coll to stop network context
 

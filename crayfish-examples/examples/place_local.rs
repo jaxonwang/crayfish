@@ -21,7 +21,7 @@ async fn change_local(local_num: shared::PlaceLocalWeak<Mutex<usize>>) {
 #[crayfish::main]
 async fn main() {
     let local_num = shared::PlaceLocal::new(Mutex::new(0usize));
-    collective::barrier();
+    collective::barrier().await;
     finish! {
         if here() == 0 {
             for i in 0..world_size() {
@@ -29,7 +29,7 @@ async fn main() {
             }
         }
     }
-    collective::barrier();
+    collective::barrier().await;
 
     info!("now my local value is {}", local_num.lock().unwrap());
 }
