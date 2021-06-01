@@ -5,6 +5,7 @@ use crate::network::MessageHandler;
 use crate::network::MessageSender;
 use crate::network::Rank;
 use bit_vec::BitVec;
+use futures::channel::oneshot;
 use gex_sys::*;
 use rustc_hash::FxHashMap;
 use std::convert::TryInto;
@@ -38,8 +39,8 @@ type MessageId = usize;
 
 enum NetworkOperation {
     Message(Rank, Vec<u8>),
-    Barrier(mpsc::SyncSender<()>),
-    Broadcast(Rank, *mut u8, usize, mpsc::SyncSender<()>),
+    Barrier(oneshot::Sender<()>),
+    Broadcast(Rank, *mut u8, usize, oneshot::Sender<()>),
 }
 unsafe impl Send for NetworkOperation {} // ptr is not send, but we are playing with unsafe!
 
@@ -70,7 +71,7 @@ pub struct CommunicationContext<T> {
     ack_fragment_id: Vec<AtomicUsize>,
 
     // for collective
-    barrier_event: Option<(gex_Event_t, mpsc::SyncSender<()>)>,
+    collective_events: Vec<(gex_Event_t, oneshot::Sender<()>)>,
 }
 
 unsafe impl<T> Send for CommunicationContext<T> where T: MessageHandler {}
@@ -346,7 +347,7 @@ where
             next_message_id: 0,
             sent_fragment_id: vec![],
             ack_fragment_id: vec![],
-            barrier_event: None,
+            collective_events: vec![],
         };
 
         logging::set_global_id(context.here().as_i32());
@@ -426,14 +427,16 @@ where
         gex_event_wait(event);
     }
 
-    fn barrier(&mut self, notify: mpsc::SyncSender<()>) {
-        debug_assert!(self.barrier_event.is_none());
+    fn barrier(&mut self, notify: oneshot::Sender<()>) {
         let event = gex_coll_barrier_nb(self.team);
-        self.barrier_event = Some((event, notify));
+        self.push_event(event, notify);
     }
 
-    fn broadcast(&mut self, root: Rank, data: *mut u8, len: usize, notify: mpsc::SyncSender<()>) {
-        // TODO: non blocking broadcast
+    fn push_event(&mut self, event: gex_Event_t, notify: oneshot::Sender<()>) {
+        self.collective_events.push((event, notify))
+    }
+
+    fn broadcast(&mut self, root: Rank, data: *mut u8, len: usize, notify: oneshot::Sender<()>) {
         let event = unsafe {
             gex_coll_broadcast_nb(
                 self.team,
@@ -443,19 +446,29 @@ where
                 len as u64,
             )
         };
-        gex_event_wait(event);
-        notify.try_send(()).unwrap();
+        self.push_event(event, notify)
     }
 
-    fn poll_barrier(&mut self) {
-        if self.barrier_event.is_some() {
-            let (event, notify) = self.barrier_event.as_ref().unwrap();
+    fn poll_collective_events(&mut self) {
+        let mut done = vec![];
+        for (i, (event, _notify)) in self.collective_events.iter().enumerate() {
             if gex_event_done(*event) {
                 // if success
-                notify.try_send(()).unwrap();
-                self.barrier_event = None
+                done.push(i)
             }
         }
+        if done.is_empty() {
+            return;
+        }
+        let mut last = self.collective_events.len();
+        for i in done.iter().rev() {
+            last -= 1;
+            self.collective_events.swap(*i, last);
+        }
+        let remain = self.collective_events.len() - done.len();
+        self.collective_events
+            .drain(remain..self.collective_events.len())
+            .for_each(|(_, n)| n.send(()).unwrap());
     }
 
     pub fn run(&mut self) {
@@ -468,7 +481,7 @@ where
         loop {
             let mut nothing = false;
             gasnet_ampoll();
-            self.poll_barrier();
+            self.poll_collective_events();
             match self.op_receiver.try_recv() {
                 Ok(NetworkOperation::Message(dst, msg)) => self.send(dst, &msg[..]),
                 Ok(NetworkOperation::Barrier(notify)) => self.barrier(notify),
@@ -596,7 +609,7 @@ where
     pub(crate) fn collective_operator(&self) -> GexCollectiveOperator {
         GexCollectiveOperator {
             sender: self.op_sender.as_ref().unwrap().clone(),
-            barrier_event: None,
+            ongoing_barrier: false,
         }
     }
 
@@ -627,59 +640,29 @@ impl MessageSender for SingleSender {
 
 pub(crate) struct GexCollectiveOperator {
     sender: mpsc::Sender<NetworkOperation>,
-    barrier_event: Option<mpsc::Receiver<()>>,
+    ongoing_barrier: bool,
 }
 
 const BEEN_WAITED_ERR_MSG: &str = "Barrier has been waited!";
-const NOT_BEEN_WAITED_ERR_MSG: &str = "Barrier has not been called!";
 impl CollectiveOperator for GexCollectiveOperator {
-    fn barrier_notify(&mut self) {
-        // only support global barrier now
-        assert!(self.barrier_event.is_none(), "{}", BEEN_WAITED_ERR_MSG);
-        let (tx, rx) = mpsc::sync_channel(1);
+    fn barrier(&mut self) -> oneshot::Receiver<()> {
+        assert!(!self.ongoing_barrier, "{}", BEEN_WAITED_ERR_MSG);
+        let (tx, rx) = oneshot::channel();
         self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
-        self.barrier_event = Some(rx);
+        self.ongoing_barrier = true;
+        rx
     }
 
-    fn barrier_wait(&mut self) {
-        self.barrier_event
-            .take()
-            .expect(NOT_BEEN_WAITED_ERR_MSG)
-            .recv()
-            .unwrap();
+    fn barrier_done(&mut self) {
+        self.ongoing_barrier = false;
     }
 
-    /// return true if has completed
-    fn barrier_try(&mut self) -> bool {
-        let success = match self
-            .barrier_event
-            .as_ref()
-            .expect(NOT_BEEN_WAITED_ERR_MSG)
-            .try_recv()
-        {
-            Ok(()) => true,
-            Err(mpsc::TryRecvError::Empty) => false,
-            _ => panic!("in barrier: network side drop the sender!"),
-        };
-        if success {
-            self.barrier_event = None;
-        }
-        success
-    }
-
-    fn barrier(&self) {
-        assert!(self.barrier_event.is_none(), "{}", BEEN_WAITED_ERR_MSG);
-        let (tx, rx) = mpsc::sync_channel(1);
-        self.sender.send(NetworkOperation::Barrier(tx)).unwrap();
-        rx.recv().unwrap();
-    }
-
-    fn broadcast(&self, root: Rank, bytes: *mut u8, size: usize) {
-        let (tx, rx) = mpsc::sync_channel(1);
+    fn broadcast(&self, root: Rank, bytes: *mut u8, size: usize) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
         self.sender
             .send(NetworkOperation::Broadcast(root, bytes, size, tx))
             .unwrap();
-        rx.recv().unwrap();
+        rx
     }
 }
 
@@ -719,7 +702,7 @@ mod test {
             next_message_id: 0,
             sent_fragment_id: vec![0],
             ack_fragment_id: vec![AtomicUsize::new(0)],
-            barrier_event: None,
+            collective_events: vec![],
         }
     }
     fn set_ptr<T>(ctx: &mut CommunicationContext<T>) {

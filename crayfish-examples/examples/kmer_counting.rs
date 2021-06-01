@@ -131,7 +131,7 @@ async fn kmer_counting(reads: Reads, final_ptr: PlaceLocalWeak<Mutex<CountTable>
 #[crayfish::main]
 async fn inner_main() {
     let count_table_ptr = PlaceLocal::new(Mutex::new(CountTable::new()));
-    collective::barrier();
+    collective::barrier().await;
     if global_id::here() == 0 {
         // ctx contains a new finish id now
         let chunk_size = 4096;
@@ -167,7 +167,7 @@ async fn inner_main() {
         }
         }
     }
-    collective::barrier();
+    collective::barrier().await;
 
     let global_table = count_table_ptr.lock().unwrap();
 

@@ -1,6 +1,7 @@
 use std::convert::TryInto;
 use crate::global_id::Place;
 use std::fmt;
+use futures::channel::oneshot;
 
 pub trait MessageHandler: for<'a> FnMut(Rank, &'a [u8]) {}
 impl<T> MessageHandler for T where T: for<'a> FnMut(Rank, &'a [u8]) {}
@@ -10,11 +11,9 @@ pub trait MessageSender: Send + 'static {
 }
 
 pub(crate) trait CollectiveOperator : Send + 'static{
-    fn barrier(&self);
-    fn barrier_notify(&mut self);
-    fn barrier_wait(&mut self);
-    fn barrier_try(&mut self) -> bool;
-    fn broadcast(&self, root: Rank, bytes:*mut u8, size: usize);
+    fn barrier(&mut self) -> oneshot::Receiver<()>;
+    fn barrier_done(&mut self);
+    fn broadcast(&self, root: Rank, bytes:*mut u8, size: usize) -> oneshot::Receiver<()>;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
