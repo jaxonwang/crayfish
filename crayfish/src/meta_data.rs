@@ -20,8 +20,8 @@ pub fn env_with_prefix(name: &str) -> Result<String, env::VarError> {
 }
 
 pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
-    let max_num = num_cpus::get();
-    let warn_dft = || warn!("use default worker number: {}", max_num);
+    let default_num = 1;
+    let warn_dft = || warn!("use default worker number: {}", default_num);
     match env_with_prefix("NUM_CPUS") {
         Ok(s) => {
             let n: usize = match s.parse() {
@@ -29,18 +29,18 @@ pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
                 Err(_) => {
                     warn!("bad worker number: {}", s);
                     warn_dft();
-                    max_num
+                    default_num
                 }
             };
-            if !(0 < n && n <= max_num) {
-                warn!("worker number must be in range 1~{}, given: {}", max_num, n);
+            if !(0 < n && n <= default_num) {
+                warn!("worker number must be in range 1~{}, given: {}", default_num, n);
                 warn_dft();
-                max_num
+                default_num
             } else {
                 n
             }
         }
-        Err(_) => max_num,
+        Err(_) => default_num,
     }
 });
 pub static MAX_BUFFER_LIFETIME: Lazy<time::Duration> = Lazy::new(|| {
