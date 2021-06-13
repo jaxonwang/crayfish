@@ -5,7 +5,10 @@ members = [
   "gex-sys/parse_mak",
   "crayfish",
   "crayfish-macros",
-  "crayfish-examples"
+  "crayfish-trace-macros",
+  "crayfish-examples",
+
+  "crayfish-test/trace-test"
 ]
 
 exclude = [

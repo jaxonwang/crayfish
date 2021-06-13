@@ -236,7 +236,7 @@ impl HelperFunctionsGenerator {
             a_id: #crayfish_path::activity::ActivityId,
             dst_place: #crayfish_path::place::Place,
             #punctuated_params
-        ) -> impl #crayfish_path::futures::Future<Output = #ret_type > {
+        ) -> impl #crayfish_path::re_export::futures::Future<Output = #ret_type > {
             let fn_id = #fn_id; // macro
 
             let f = #crayfish_path::runtime::wait_single::<#ret_type>(a_id); // macro
@@ -269,7 +269,7 @@ impl HelperFunctionsGenerator {
         async fn #execute_fn_name(a_id: #crayfish_path::activity::ActivityId, waited: ::std::primitive::bool, #punctuated_params) {
             let fn_id = #fn_id; // macro
             use #crayfish_path::global_id::ActivityIdMethods;
-            use #crayfish_path::futures::FutureExt;
+            use #crayfish_path::re_export::futures::FutureExt;
             let finish_id = a_id.get_finish_id();
             use #crayfish_path::runtime::ApgasContext;
             let mut ctx = #crayfish_path::runtime::ConcreteContext::inherit(finish_id);
@@ -294,8 +294,8 @@ impl HelperFunctionsGenerator {
 
         quote! {
 
-        fn #handler_fn_name(item: #crayfish_path::activity::TaskItem) -> #crayfish_path::futures::future::BoxFuture<'static, ()> {
-        use #crayfish_path::futures::FutureExt;
+        fn #handler_fn_name(item: #crayfish_path::activity::TaskItem) -> #crayfish_path::re_export::futures::future::BoxFuture<'static, ()> {
+        use #crayfish_path::re_export::futures::FutureExt;
         async move {
             let waited = item.is_waited();
             let mut e = #crayfish_path::activity::TaskItemExtracter::new(item);
@@ -358,14 +358,14 @@ fn _expand_async_func(attrs: Attributes, function: ItemFn) -> Result<TokenStream
         sig.asyncness = None;
         let ret_type = &gen.ret_type;
         sig.output = syn::parse2(
-            quote!( -> #crayfish_path::futures::future::BoxFuture<'cfctxlt, #ret_type> ),
+            quote!( -> #crayfish_path::re_export::futures::future::BoxFuture<'cfctxlt, #ret_type> ),
         )?;
         arg_token =
             quote!(#context_arg_name: &'cfctxlt mut impl #crayfish_path::runtime::ApgasContext);
         sig.generics = syn::parse2(quote!(<'cfctxlt>))?;
         *block = Box::new(syn::parse2(quote! {
             {
-                use #crayfish_path::futures::FutureExt;
+                use #crayfish_path::re_export::futures::FutureExt;
                 async move #block .boxed()
             }
         })?)

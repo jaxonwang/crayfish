@@ -1,0 +1,21 @@
+[package]
+name = "crayfish-trace-macros"
+version = "0.1.0"
+authors = ["JX Wang <jxwang92@gmail.com>"]
+edition = "2018"
+license = "BSD-3-Clause"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0"
+syn = "1.0.72"
+proc-macro2 = "1.0.26"
+
+[dev-dependencies]
+metrics = "0.16"
+quanta = "0.8"
+
+[features]
+enabled = []
