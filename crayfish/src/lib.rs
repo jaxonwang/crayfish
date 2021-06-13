@@ -14,6 +14,8 @@ pub mod args;
 mod executor;
 pub mod shared;
 pub mod collective;
+#[cfg(feature = "trace")]
+pub mod trace;
 
 mod prelude {
     pub use crate::executor::spawn;
@@ -23,11 +25,14 @@ mod prelude {
     pub use crate::serialization::Serialize;
     pub use crate::serialization::Deserialize;
     pub use crate::serialization::DeserializeOwned;
+}
 
-    // re export
+pub mod re_export{
+    pub use once_cell;
     pub use futures;
 }
 
 pub use crate::prelude::*;
 pub use crayfish_macros::*;
+pub use crayfish_trace_macros::*;
 
