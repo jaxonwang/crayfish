@@ -55,7 +55,7 @@ mod inner {
     }
 
     fn crayfish_path(is_internal: bool) -> syn::Path {
-        let crayfish_path = if is_internal { "::crate" } else { "::crayfish" };
+        let crayfish_path = if is_internal { "crate" } else { "::crayfish" };
         syn::parse_str::<syn::Path>(crayfish_path).unwrap()
     }
 
