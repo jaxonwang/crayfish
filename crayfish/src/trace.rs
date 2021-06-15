@@ -38,6 +38,7 @@ impl Span {
 
 pub fn register_span(sp: &Span) {
     let mut st = GLOBAL_SPAN_TABLE.lock().unwrap();
+    // might register multiple time for the same localtion (because of generic)
     st.insert(sp.hash, sp.clone());
 }
 
@@ -137,12 +138,12 @@ fn print_metric_table(table_name: &str, table: &DurationTable) {
     orderd_record.sort_unstable_by_key(|(_, record)| std::cmp::Reverse(record.acc));
 
     let mut show: String = String::default();
-    show.push_str(&format!("\n[{}]", table_name));
+    show.push_str(&format!("\n[{}] Profiling:", table_name));
     let span_table = GLOBAL_SPAN_TABLE.lock().unwrap().clone();
     for (id, r) in orderd_record {
         let span = span_table[id];
         show.push_str(&format!(
-            "\n{} in {}:{} => total:{} min: {} max: {} avg: {} count {}",
+            "\n{} at {}:{} => total:{} min: {} max: {} avg: {} count {}",
             span.span_name,
             span.module,
             span.line,
