@@ -1,5 +1,6 @@
 use crate::attr::Attributes;
 use crate::utils::err;
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use proc_macro2::TokenTree;
 use quote::quote;
@@ -196,6 +197,8 @@ impl HelperFunctionsGenerator {
         let execute_fn_name = self.execute_fn_name();
         let punctuated_params = self.punctuated_params();
         let param_ident_list = self.param_ident_list();
+        let profiling_label =
+            syn::LitStr::new(&format!("{}_ff_serialize", self.fn_name), Span::call_site());
 
         quote! {
 
@@ -211,7 +214,11 @@ impl HelperFunctionsGenerator {
             } else {
                 // trace!("spawn activity:{} at place: {}", a_id, dst_place);
                 let mut builder = #crayfish_path::activity::TaskItemBuilder::new(fn_id, dst_place, a_id);
+
+                #crayfish_path::profiling_start!(#profiling_label);
                 #(builder.arg(#param_ident_list);)*
+                #crayfish_path::profiling_stop!();
+
                 let item = builder.build_box();
                 use #crayfish_path::runtime::ApgasContext;
                 #crayfish_path::runtime::ConcreteContext::send(item);
@@ -229,6 +236,10 @@ impl HelperFunctionsGenerator {
         let execute_fn_name = self.execute_fn_name();
         let punctuated_params = self.punctuated_params();
         let param_ident_list = self.param_ident_list();
+        let profiling_label = syn::LitStr::new(
+            &format!("{}_async_serialize", self.fn_name),
+            Span::call_site(),
+        );
 
         quote! {
 
@@ -245,7 +256,11 @@ impl HelperFunctionsGenerator {
             } else {
                 // trace!("spawn activity:{} at place: {}", a_id, dst_place);
                 let mut builder = #crayfish_path::activity::TaskItemBuilder::new(fn_id, dst_place, a_id);
+
+                #crayfish_path::profiling_start!(#profiling_label);
                 #(builder.arg(#param_ident_list);)*
+                #crayfish_path::profiling_stop!();
+
                 builder.waited();
                 let item = builder.build_box();
                 use #crayfish_path::runtime::ApgasContext;
@@ -287,10 +302,14 @@ impl HelperFunctionsGenerator {
         let handler_fn_name = self.handler_fn_name();
         let execute_fn_name = self.execute_fn_name();
 
-        let extract_args = self
-            .params
-            .iter()
-            .map(|_| "e.arg()".parse::<TokenStream>().unwrap());
+        let extract_args =
+            (0..self.params.len()).map(|i| format!("arg{}", i).parse::<TokenStream>().unwrap());
+        let arg_stmts = (0..self.params.len())
+            .map(|i| syn::parse_str::<syn::Stmt>(&format!("let arg{} = e.arg();", i)).unwrap());
+        let profiling_label = syn::LitStr::new(
+            &format!("{}_deserialization", self.fn_name),
+            Span::call_site(),
+        );
 
         quote! {
 
@@ -306,6 +325,9 @@ impl HelperFunctionsGenerator {
             // #crayfish_path::logging::trace!(
             //     "Got activity:{} from {}", a_id, a_id.get_spawned_place()
             // );
+            #crayfish_path::profiling_start!(#profiling_label);
+            #(#arg_stmts)*
+            #crayfish_path::profiling_stop!();
             #execute_fn_name(a_id, waited, #(#extract_args),*).await;
         }
         .boxed()
