@@ -175,6 +175,7 @@ where
     hub_thread.join().unwrap();
     network_thread.join().unwrap();
     drop(rt);
+    #[cfg(feature="trace")]
     crate::trace::print_profiling();
     info!("exit gracefully");
 

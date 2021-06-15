@@ -7,3 +7,5 @@ publish = false
 
 [dependencies]
 crayfish = {path = "../../crayfish", features=["trace"]}
+
+[workspace]

@@ -27,24 +27,6 @@ jobs:
         run: |
           GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
           GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
-      - name: Test Trace
-        run: |
-          cargo build --package trace-test
-          GASNET_SPAWNFN="L" ./target/debug/trace-test 1
-        
-  valgrind:
-    name: valgrind
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust
-        run: rustup update stable
-      - name: Submodules
-        run: |
-          git submodule sync --recursive
-          git submodule update --init --force --recursive
-      - name: Build
-        run: cargo build --all-targets -vv
       - name: Install Valgrind
         run: |
           sudo apt-get update -y
@@ -71,3 +53,19 @@ jobs:
           sudo apt-get install -y mpich libibverbs-dev
       - name: Build Ibv
         run: cd crayfish-test/build-test/build-ibv && cargo build -vv
+
+  test-trace:
+    name: test-trace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        run: rustup update stable
+      - name: Submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive
+      - name: Build Trace
+        run: cd crayfish-test/trace-test/ && cargo build -vv
+      - name: Test Trace
+        run: cd crayfish-test/trace-test/ && GASNET_SPAWNFN=L cargo run 2

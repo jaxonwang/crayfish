@@ -20,7 +20,10 @@ pub fn env_with_prefix(name: &str) -> Result<String, env::VarError> {
 }
 
 pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
+    #[cfg(not(test))]
     let default_num = 1;
+    #[cfg(test)] // test requires the cpu num > 1
+    let default_num = 2;
     let warn_dft = || warn!("use default worker number: {}", default_num);
     match env_with_prefix("NUM_CPUS") {
         Ok(s) => {
