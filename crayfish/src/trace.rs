@@ -115,7 +115,7 @@ impl Drop for ThreadLocalMetricTable {
     fn drop(&mut self) {
         print_metric_table(&format!("{:?}", self.thread_id), &self.inner);
         // merge to the global
-        let mut t = GLOBAL_METRIC_TABLE.lock().unwrap();
+        let mut t = GLOBAL_METRIC_TABLE.lock().expect("global metric table lock poisioned");
         for (k, v) in self.inner.iter() {
             t.entry(k.clone()).or_default().update(v);
         }
@@ -136,14 +136,16 @@ fn print_metric_table(table_name: &str, table: &DurationTable) {
     };
     let mut orderd_record: Vec<_> = table.iter().collect();
     orderd_record.sort_unstable_by_key(|(_, record)| std::cmp::Reverse(record.acc));
+    let here = crate::global_id::here();
 
     let mut show: String = String::default();
-    show.push_str(&format!("\n[{}] Profiling:", table_name));
-    let span_table = GLOBAL_SPAN_TABLE.lock().unwrap().clone();
+    let place_and_thread = format!("[{}:{}]", here, table_name);
+    let span_table = GLOBAL_SPAN_TABLE.lock().expect("global span table lock poisoned").clone();
     for (id, r) in orderd_record {
         let span = span_table[id];
         show.push_str(&format!(
-            "\n{} at {}:{} => total:{} min: {} max: {} avg: {} count {}",
+            "\n{} {}@{}:{} => total:{} min: {} max: {} avg: {} count {}",
+            place_and_thread,
             span.span_name,
             span.module,
             span.line,
@@ -154,7 +156,12 @@ fn print_metric_table(table_name: &str, table: &DurationTable) {
             r.count
         ));
     }
-    eprintln!("{}", show);
+    use std::io::Write;
+    let stderr = std::io::stderr();
+    let mut stderr_h = stderr.lock();
+    // should not panic since this function is in drop
+    stderr_h.write_all(show.as_bytes()).unwrap_or(());
+    stderr_h.flush().unwrap_or(());
 }
 
 pub fn print_profiling() {
