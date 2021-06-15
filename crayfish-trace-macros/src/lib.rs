@@ -81,7 +81,7 @@ mod inner {
                 register_span(&s);
                 s
             });
-            &#static_span_var_name
+            Lazy::force(&#static_span_var_name)
         };
         let #start_var_name = #crayfish_path::trace::timer_now();
 
