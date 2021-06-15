@@ -7,10 +7,8 @@ members = [
   "crayfish-macros",
   "crayfish-trace-macros",
   "crayfish-examples",
-
-  "crayfish-test/trace-test"
 ]
 
 exclude = [
-  "crayfish-test/build-test/"
+  "crayfish-test/build-test/",
 ]
