@@ -15,6 +15,8 @@ use crate::logging::*;
 use crate::meta_data;
 use crate::network::MessageSender;
 use crate::network::Rank;
+use crayfish_trace_macros::profiling_start_internal;
+use crayfish_trace_macros::profiling_stop_internal;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::any::Any;
@@ -93,7 +95,11 @@ pub(crate) fn message_recv_callback<F: StaticSquashBufferFactory>(_src: Rank, da
         })
     };
 
-    get_ref().send(F::deserialize_from(data)).unwrap();
+    profiling_start_internal!("global buffer deserialization");
+    let buf = F::deserialize_from(data);
+    profiling_stop_internal!();
+
+    get_ref().send(buf).unwrap();
 }
 
 // take the receiver from static, to init distributor
@@ -260,7 +266,9 @@ where
         }
         trace!("buffer:{} timeout. send", idx);
         dst_buffer.0.squash_all();
+        profiling_start_internal!("global buffer serialzation");
         let bytes = dst_buffer.0.serialize_and_clear();
+        profiling_stop_internal!();
         self.sender.send_msg(Rank::from_usize(idx), bytes);
     }
 }
@@ -544,7 +552,7 @@ where
             if got_something {
                 // reset
                 sleep_us = time::Duration::from_micros(1);
-            } else{
+            } else {
                 std::thread::sleep(sleep_us);
                 if sleep_us < time::Duration::from_millis(1) {
                     sleep_us *= 2;

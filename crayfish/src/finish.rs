@@ -80,8 +80,9 @@ impl CallingTree {
     }
 
     pub fn activity_done(&mut self, item: TaskItem) {
-        let mut ex = TaskItemExtracter::new(item);
+        crayfish_trace_macros::profiling_start_internal!("distributed termination detection");
 
+        let mut ex = TaskItemExtracter::new(item);
         let fn_id = ex.fn_id();
         let place = ex.activity_id().get_spawned_place();
         let activity_id = ex.activity_id();
@@ -118,6 +119,8 @@ impl CallingTree {
                 }
             }
         }
+
+        crayfish_trace_macros::profiling_stop_internal!();
     }
 
     pub fn try_purge(&mut self, mut current_node_id: ActivityId) {
