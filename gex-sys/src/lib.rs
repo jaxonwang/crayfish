@@ -353,6 +353,27 @@ pub unsafe fn gex_am_reqeust_medium0(
     ));
 }
 
+pub unsafe fn gex_am_reqeust_medium1(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    lc_opt: *mut gex_Event_t,
+    arg0: gex_AM_Arg_t,
+) {
+    assert_gasnet_ok(gex_AM_RequestMedium_Wrap1(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        lc_opt,
+        0,
+        arg0,
+    ));
+}
+
 pub unsafe fn gex_am_reqeust_long0(
     tm: gex_TM_t,
     rank: gex_Rank_t,
@@ -436,6 +457,42 @@ pub unsafe fn gex_am_reqeust_long6(
         arg3,
         arg4,
         arg5,
+    ));
+}
+
+pub unsafe fn gex_am_reqeust_long7(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    dest_addr: *mut ::std::os::raw::c_void,
+    dest_offset: isize,
+    lc_opt: *mut gex_Event_t,
+    arg0: gex_AM_Arg_t,
+    arg1: gex_AM_Arg_t,
+    arg2: gex_AM_Arg_t,
+    arg3: gex_AM_Arg_t,
+    arg4: gex_AM_Arg_t,
+    arg5: gex_AM_Arg_t,
+    arg6: gex_AM_Arg_t,
+) {
+    assert_gasnet_ok(gex_AM_RequestLong_Wrap7(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        dest_addr.offset(dest_offset),
+        lc_opt,
+        0,
+        arg0,
+        arg1,
+        arg2,
+        arg3,
+        arg4,
+        arg5,
+        arg6,
     ));
 }
 
