@@ -14,6 +14,7 @@ pub(crate) trait CollectiveOperator : Send + 'static{
     fn barrier(&mut self) -> oneshot::Receiver<()>;
     fn barrier_done(&mut self);
     fn broadcast(&self, root: Rank, bytes:*mut u8, size: usize) -> oneshot::Receiver<()>;
+    fn all_gather(&self, bytes:Vec<u8>) -> oneshot::Receiver<Vec<Vec<u8>>>;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

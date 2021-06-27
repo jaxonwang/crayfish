@@ -157,6 +157,11 @@ mod test {
             tx.send(()).unwrap();
             rx
         }
+        fn all_gather(&self, _bytes: Vec<u8>) -> oneshot::Receiver<Vec<Vec<u8>>> {
+            let (tx, rx) = oneshot::channel();
+            tx.send(vec![]).unwrap();
+            rx
+        }
     }
 
     fn do_coll() {
