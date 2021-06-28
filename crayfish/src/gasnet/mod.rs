@@ -52,12 +52,13 @@ enum CollectiveEventStatus {
 }
 
 trait CollectiveEventTrait {
-    fn test(&mut self) -> CollectiveEventStatus;
+    fn test(&mut self, ctx:&mut TransportContext) -> CollectiveEventStatus;
     fn notify(&mut self);
+    fn set_id(&mut self, id: CollectiveEventId);
 }
 
 struct AllGatherEvent {
-    event_id: u128,
+    id: CollectiveEventId,
     input: Vec<u8>,
     notifier: Option<oneshot::Sender<Vec<Vec<u8>>>>,
 }
@@ -67,15 +68,20 @@ impl AllGatherEvent{
 }
 
 impl CollectiveEventTrait for AllGatherEvent {
-    fn test(&mut self) -> CollectiveEventStatus{
+    fn test(&mut self, ctx: &mut TransportContext) -> CollectiveEventStatus{
             CollectiveEventStatus::Done
         }
     fn notify(&mut self){
     }
 
+    fn set_id(&mut self, id: CollectiveEventId){
+        self.id = id;
+    }
+
 }
 
 struct GexEvent {
+    id: CollectiveEventId,
     gex_handle: gex_Event_t,
     // make notifier a option since oneshot consume itself
     notifier: Option<oneshot::Sender<()>>,
@@ -87,13 +93,14 @@ impl GexEvent {
         GexEvent {
             gex_handle,
             notifier,
+            id: 0
         }
     }
 }
 
 
 impl CollectiveEventTrait for GexEvent {
-    fn test(&mut self) -> CollectiveEventStatus
+    fn test(&mut self, _: &mut TransportContext) -> CollectiveEventStatus
     {
         match gex_event_done(self.gex_handle) {
             true => CollectiveEventStatus::Done,
@@ -103,28 +110,8 @@ impl CollectiveEventTrait for GexEvent {
     fn notify(&mut self) {
         self.notifier.take().unwrap().send(()).unwrap();
     }
-}
-
-enum CollectiveEvent{
-    Gex(GexEvent),
-    AllGather(AllGatherEvent)
-}
-
-impl CollectiveEventTrait for CollectiveEvent{
-    fn test(&mut self) -> CollectiveEventStatus
-    {
-        use CollectiveEvent::*;
-        match self{
-            Gex(g) => g.test(),
-            AllGather(g) => g.test()
-        }
-    }
-    fn notify(&mut self){
-        use CollectiveEvent::*;
-        match self{
-            Gex(g) => g.notify(),
-            AllGather(g) => g.notify()
-        }
+    fn set_id(&mut self, id: CollectiveEventId){
+        self.id = id;
     }
 }
 
@@ -132,58 +119,165 @@ type MessageType = gex_AM_Arg_t;
 const MESSAGE_TYPE_NORMAL: MessageType = 0;
 const MESSAGE_TYPE_COLL_ALLGATHER: MessageType = 1;
 
-pub struct CommunicationContext<T> {
-    // endpoint: gex_EP_t, // thread safe handler
+struct TransportContext{
     team: gex_TM_t,
-    // entry_table: Entrytable,
-    cmd_args: Vec<String>,
-
-    message_handler: T,
-
     segment_len: usize,
     endpoints_data: Vec<EndpointData>,
 
     max_global_long_request_len: usize,
     max_global_medium_request_len: usize,
 
-    local_rank: Rank,
-    world_size: usize,
-
-    message_buffers: Vec<FxHashMap<MessageId, FragmentBuffer>>,
 
     // for sending
     next_message_id: usize,
-    op_receiver: mpsc::Receiver<NetworkOperation>,
-    op_sender: Option<mpsc::Sender<NetworkOperation>>, // set to option, will drop after run
     sent_fragment_id: Vec<usize>,
     ack_fragment_id: Vec<AtomicUsize>,
+
+    // receive
+    message_buffers: Vec<FxHashMap<MessageId, FragmentBuffer>>,
+}
+
+impl TransportContext{
+    fn new(team: gex_TM_t) -> Self{
+        TransportContext{
+            team,
+            segment_len: 0,
+            endpoints_data: vec![],
+            max_global_long_request_len: 0,
+            max_global_medium_request_len: 0,
+            next_message_id: 0,
+            sent_fragment_id: vec![],
+            ack_fragment_id: vec![],
+            message_buffers: vec![]
+        }
+    }
+
+    fn wait_send_handled(&self, dst_idx: usize) {
+        // loop until ack
+        // TODO: sleep
+        while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
+            != self.sent_fragment_id[dst_idx]
+        {
+            gasnet_ampoll();
+        }
+    }
+
+    // interrupt safe, no malloc
+    fn send(&mut self, dst: Rank, message_type: MessageType, message: &[u8]) {
+        let message_type = message_type as gex_AM_Arg_t;
+        debug!("sending to {} with message len {}", dst, message.len());
+        // NOTE: not thread safe!
+        if message.len() < self.max_global_medium_request_len {
+            unsafe {
+                gex_am_reqeust_medium1(
+                    self.team,
+                    dst.gex_rank(),
+                    MEDIUM_HANDLER_INDEX,
+                    message.as_ptr() as *const c_void,
+                    message.len() as size_t,
+                    gex_event_now(), // block
+                    message_type,
+                )
+            };
+        } else {
+            let message_id = self.next_message_id;
+            self.next_message_id += 1;
+            let mut offset: usize = 0;
+            let dst_idx = dst.as_usize();
+            let chunk_size = self.endpoints_data[dst_idx].segment_len;
+            let packet_size = self.max_global_long_request_len;
+
+            while offset < message.len() {
+                // wait till last finished
+                self.wait_send_handled(dst_idx);
+                let rest = &message[offset..];
+                let old_offset = offset;
+
+                if rest.len() > packet_size {
+                    let src_addr = message[packet_size..].as_ptr() as *const c_void;
+                    let dst_addr =
+                        unsafe { self.endpoints_data[dst_idx].segment_addr.add(packet_size) };
+                    let send_size = usize::min(rest.len() - packet_size, chunk_size);
+                    unsafe {
+                        gex_rma_putblocking(
+                            self.team,
+                            dst.gex_rank(),
+                            dst_addr,
+                            src_addr,
+                            send_size as u64,
+                        );
+                    }
+                    offset += send_size;
+                }
+
+                let (a0, a1) = u64_to_i32_2(message.len() as u64);
+                let (a2, a3) = u64_to_i32_2(old_offset as u64);
+                let (a4, a5) = u64_to_i32_2(message_id as u64);
+                let send_slice = &message[old_offset..];
+                let send_size = usize::min(send_slice.len(), packet_size);
+                #[rustfmt::skip]
+                unsafe {
+                    gex_am_reqeust_long7(
+                        self.team,
+                        dst.gex_rank(),
+                        LONG_HANDLER_INDEX,
+                        send_slice.as_ptr() as *const c_void,
+                        send_size as size_t,
+                        self.endpoints_data[dst_idx].segment_addr,
+                        0,
+                        gex_event_group(), // non block
+                        a0, a1, a2, a3, a4, a5, message_type
+                    )
+                };
+                // trace!("send offset {} bytes {}", offset, send_size);
+                offset += send_size;
+                self.sent_fragment_id[dst_idx] += 1;
+                gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
+            }
+        }
+    }
+
+}
+
+
+pub struct CommunicationContext<T> {
+    // endpoint: gex_EP_t, // thread safe handler
+    // entry_table: Entrytable,
+    cmd_args: Vec<String>,
+
+    // receive
+    message_handler: T,
+
+    tctx: TransportContext,
+
+    local_rank: Rank,
+    world_size: usize,
+
+    op_receiver: mpsc::Receiver<NetworkOperation>,
+    op_sender: Option<mpsc::Sender<NetworkOperation>>, // set to option, will drop after run
 
     // for collective
     collective_context: CollectiveContext,
 }
 
+type CollectiveEventId = usize;
+#[derive(Default)]
 struct CollectiveContext {
-    collective_events: Vec<CollectiveEvent>,
-}
-
-impl Default for CollectiveContext {
-    fn default() -> Self {
-        CollectiveContext {
-            collective_events: vec![],
-        }
-    }
+    collective_events: FxHashMap<CollectiveEventId, Box<dyn CollectiveEventTrait>>,
+    next_id: CollectiveEventId,
 }
 
 impl CollectiveContext {
     /// return true if there is progress
-    fn poll(&mut self) -> bool{
+    fn poll(&mut self, ctx: &mut TransportContext) -> bool{
         let mut progress = false;
         let mut done = vec![];
-        for (i, event) in self.collective_events.iter_mut().enumerate() {
-            match event.test() {
+        for (id, event) in self.collective_events.iter_mut(){
+            match event.test(ctx) {
                 CollectiveEventStatus::Done => {
-                    done.push(i);
+                    done.push(*id);
                     progress = true;
+                    event.notify();
                 }
                 CollectiveEventStatus::Progress => {
                     progress = true;
@@ -194,20 +288,17 @@ impl CollectiveContext {
         if done.is_empty() {
             return progress;
         }
-        let mut last = self.collective_events.len();
-        for i in done.iter().rev() {
-            last -= 1;
-            self.collective_events.swap(*i, last);
+        for id in done.iter(){
+            self.collective_events.remove(id);
         }
-        let remain = self.collective_events.len() - done.len();
-        self.collective_events
-            .drain(remain..self.collective_events.len())
-            .for_each(|mut e| e.notify());
         progress
     }
 
-    fn push(&mut self, event: CollectiveEvent) {
-        self.collective_events.push(event)
+    fn push(&mut self, event: impl CollectiveEventTrait + 'static) {
+        self.next_id += 1;
+        let mut event = event;
+        event.set_id(self.next_id);
+        self.collective_events.insert(self.next_id, Box::new(event));
     }
 
     fn recv_all_gather(&mut self, src: Rank, message: &[u8]){}
@@ -347,7 +438,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let offset = i32_2_to_u64(arg2, arg3) as usize;
     let message_id = i32_2_to_u64(arg4, arg5) as usize;
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
-    let chunk_size = context.endpoints_data[context.local_rank.as_usize()].segment_len;
+    let chunk_size = context.tctx.endpoints_data[context.local_rank.as_usize()].segment_len;
 
     trace!(
         "long recv {} bytes from {} at mem {:p} {}",
@@ -380,7 +471,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
 
     let buf = unsafe { slice::from_raw_parts(buf as *const u8, chunk_size) };
     let buf = &buf[..usize::min(message_len - offset, chunk_size)];
-    let fg_buffer = context.message_buffers[src_idx]
+    let fg_buffer = context.tctx.message_buffers[src_idx]
         .entry(message_id)
         .or_insert_with(|| FragmentBuffer::with_length(message_len, chunk_size));
     fg_buffer.save(offset, buf);
@@ -388,7 +479,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     if fg_buffer.all_done() {
         let buf = &fg_buffer.buffer[..];
         call_handler(buf);
-        context.message_buffers[src_idx].remove(&message_id);
+        context.tctx.message_buffers[src_idx].remove(&message_id);
     }
     TK::reply_short(token);
 }
@@ -425,7 +516,7 @@ extern "C" fn ack_reply<T: MessageHandler>(token: gex_Token_t) {
 
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
 
-    let _a = context.ack_fragment_id[src].fetch_add(1, Ordering::Release);
+    let _a = context.tctx.ack_fragment_id[src].fetch_add(1, Ordering::Release);
 }
 
 const MEDIUM_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8;
@@ -475,21 +566,13 @@ where
 
         let (tx, rx) = mpsc::channel();
         let context = CommunicationContext {
-            team: tm,
-            endpoints_data: vec![],
             cmd_args: args,
             message_handler: handler,
-            segment_len: 0,
-            max_global_long_request_len: 0,
-            max_global_medium_request_len: 0,
+            tctx: TransportContext::new(tm),
             local_rank: Rank::from_gex_rank(gax_system_query_jobrank()),
             world_size: gax_system_query_jobsize() as usize,
-            message_buffers: vec![],
             op_receiver: rx,
             op_sender: Some(tx),
-            next_message_id: 0,
-            sent_fragment_id: vec![],
-            ack_fragment_id: vec![],
             collective_context: Default::default(),
         };
 
@@ -514,35 +597,35 @@ where
             seg_len,
             self.world_size
         );
-        let seg = gex_segment_attach(self.team, seg_len);
-        self.segment_len = gax_segment_query_size(seg);
+        let seg = gex_segment_attach(self.tctx.team, seg_len);
+        self.tctx.segment_len = gax_segment_query_size(seg);
         debug!(
             "Max buffer length: {} KB. Round buffer length to {} KB, chunk size:{} KB",
             max_seg_len / 1024,
-            self.segment_len / 1024,
+            self.tctx.segment_len / 1024,
             chunk_size / 1024
         );
 
         // set max global long
-        self.max_global_long_request_len = gex_am_max_global_request_long(self.team);
+        self.tctx.max_global_long_request_len = gex_am_max_global_request_long(self.tctx.team);
         // TODO: current assume symmetric machines
-        self.max_global_medium_request_len = gex_am_max_global_request_medium(self.team);
+        self.tctx.max_global_medium_request_len = gex_am_max_global_request_medium(self.tctx.team);
         debug!(
             "Setting max global long reqeust length to {}",
-            self.max_global_long_request_len
+            self.tctx.max_global_long_request_len
         );
         debug!(
             "Setting max global medium reqeust length to {}",
-            self.max_global_medium_request_len
+            self.tctx.max_global_medium_request_len
         );
         // TODO: warn if request len too short for udp, ibv...
 
         // set endpoint addr offset
         for i in 0..self.world_size {
             let (segment_addr, _segment_len) =
-                gex_ep_query_bound_segment(self.team, i as gex_Rank_t);
+                gex_ep_query_bound_segment(self.tctx.team, i as gex_Rank_t);
             // assert_eq!(segment_len, self.segment_len); TODO: different machine.
-            self.endpoints_data.push(EndpointData {
+            self.tctx.endpoints_data.push(EndpointData {
                 segment_addr: unsafe {
                     segment_addr.offset(
                         (self.local_rank.as_usize() * chunk_size)
@@ -553,12 +636,12 @@ where
                 segment_len: chunk_size,
             });
             // prepare buffer
-            self.message_buffers.push(FxHashMap::default());
+            self.tctx.message_buffers.push(FxHashMap::default());
             // prepare frangment ids
-            self.sent_fragment_id.push(0);
-            self.ack_fragment_id.push(AtomicUsize::new(0));
+            self.tctx.sent_fragment_id.push(0);
+            self.tctx.ack_fragment_id.push(AtomicUsize::new(0));
         }
-        debug!("Endpoint data: {:?}", self.endpoints_data);
+        debug!("Endpoint data: {:?}", self.tctx.endpoints_data);
         // set proper ptr
         unsafe {
             // WARN: danger!
@@ -566,30 +649,30 @@ where
         }
 
         // in case some finish init fast and send message before the pointer is set
-        let event = gex_coll_barrier_nb(self.team);
+        let event = gex_coll_barrier_nb(self.tctx.team);
         gex_event_wait(event);
     }
 
     fn barrier(&mut self, notify: oneshot::Sender<()>) {
-        let event = gex_coll_barrier_nb(self.team);
-        self.push_event(CollectiveEvent::Gex(GexEvent::new(event, notify)));
+        let event = gex_coll_barrier_nb(self.tctx.team);
+        self.push_event(GexEvent::new(event, notify));
     }
 
-    fn push_event(&mut self, event: CollectiveEvent) {
+    fn push_event(&mut self, event: impl CollectiveEventTrait + 'static) {
         self.collective_context.push(event)
     }
 
     fn broadcast(&mut self, root: Rank, data: *mut u8, len: usize, notify: oneshot::Sender<()>) {
         let event = unsafe {
             gex_coll_broadcast_nb(
-                self.team,
+                self.tctx.team,
                 root.gex_rank(),
                 data as *mut c_void,
                 data as *mut c_void,
                 len as u64,
             )
         };
-        self.push_event(CollectiveEvent::Gex(GexEvent::new(event, notify)));
+        self.push_event(GexEvent::new(event, notify));
     }
 
     fn all_gather(&mut self, data: Vec<u8>, notify: oneshot::Sender<Vec<Vec<u8>>>) {
@@ -598,7 +681,7 @@ where
 
     /// return true if there is progress
     fn poll_collective_events(&mut self) -> bool {
-        self.collective_context.poll()
+        self.collective_context.poll(&mut self.tctx)
     }
 
     pub fn run(&mut self) {
@@ -616,7 +699,7 @@ where
                 Ok(op) => {
                     match op {
                         NetworkOperation::Message(dst, msg) => {
-                            self.send(dst, MESSAGE_TYPE_NORMAL, &msg[..])
+                            self.tctx.send(dst, MESSAGE_TYPE_NORMAL, &msg[..])
                         }
                         NetworkOperation::Barrier(notify) => self.barrier(notify),
                         NetworkOperation::Broadcast(root, data, len, notify) => {
@@ -644,16 +727,6 @@ where
         info!("Shuting down network.");
     }
 
-    fn wait_send_handled(&self, dst_idx: usize) {
-        // loop until ack
-        // TODO: sleep
-        while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
-            != self.sent_fragment_id[dst_idx]
-        {
-            gasnet_ampoll();
-        }
-    }
-
     // fn wait_all_send_handled(&self) {
     //     for idx in 0..self.world_size {
     //         if idx != self.local_rank.as_usize() {
@@ -667,81 +740,6 @@ where
             MESSAGE_TYPE_NORMAL => (self.message_handler)(src, message),
             MESSAGE_TYPE_COLL_ALLGATHER => self.collective_context.recv_all_gather(src, message),
             _ => unreachable!(),
-        }
-    }
-
-    // interrupt safe, no malloc
-    pub fn send(&mut self, dst: Rank, message_type: MessageType, message: &[u8]) {
-        let message_type = message_type as gex_AM_Arg_t;
-        debug!("sending to {} with message len {}", dst, message.len());
-        // NOTE: not thread safe!
-        if message.len() < self.max_global_medium_request_len {
-            unsafe {
-                gex_am_reqeust_medium1(
-                    self.team,
-                    dst.gex_rank(),
-                    MEDIUM_HANDLER_INDEX,
-                    message.as_ptr() as *const c_void,
-                    message.len() as size_t,
-                    gex_event_now(), // block
-                    message_type,
-                )
-            };
-        } else {
-            let message_id = self.next_message_id;
-            self.next_message_id += 1;
-            let mut offset: usize = 0;
-            let dst_idx = dst.as_usize();
-            let chunk_size = self.endpoints_data[dst_idx].segment_len;
-            let packet_size = self.max_global_long_request_len;
-
-            while offset < message.len() {
-                // wait till last finished
-                self.wait_send_handled(dst_idx);
-                let rest = &message[offset..];
-                let old_offset = offset;
-
-                if rest.len() > packet_size {
-                    let src_addr = message[packet_size..].as_ptr() as *const c_void;
-                    let dst_addr =
-                        unsafe { self.endpoints_data[dst_idx].segment_addr.add(packet_size) };
-                    let send_size = usize::min(rest.len() - packet_size, chunk_size);
-                    unsafe {
-                        gex_rma_putblocking(
-                            self.team,
-                            dst.gex_rank(),
-                            dst_addr,
-                            src_addr,
-                            send_size as u64,
-                        );
-                    }
-                    offset += send_size;
-                }
-
-                let (a0, a1) = u64_to_i32_2(message.len() as u64);
-                let (a2, a3) = u64_to_i32_2(old_offset as u64);
-                let (a4, a5) = u64_to_i32_2(message_id as u64);
-                let send_slice = &message[old_offset..];
-                let send_size = usize::min(send_slice.len(), packet_size);
-                #[rustfmt::skip]
-                unsafe {
-                    gex_am_reqeust_long7(
-                        self.team,
-                        dst.gex_rank(),
-                        LONG_HANDLER_INDEX,
-                        send_slice.as_ptr() as *const c_void,
-                        send_size as size_t,
-                        self.endpoints_data[dst_idx].segment_addr,
-                        0,
-                        gex_event_group(), // non block
-                        a0, a1, a2, a3, a4, a5, message_type
-                    )
-                };
-                // trace!("send offset {} bytes {}", offset, send_size);
-                offset += send_size;
-                self.sent_fragment_id[dst_idx] += 1;
-                gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
-            }
         }
     }
 
@@ -837,25 +835,15 @@ mod test {
 
     fn fake_context<T: MessageHandler>(f: T) -> CommunicationContext<T> {
         let (tx, rx) = mpsc::channel();
+        let team = null::<*const ()>() as gex_TM_t;
         CommunicationContext {
-            team: null::<*const ()>() as gex_TM_t,
-            endpoints_data: vec![EndpointData {
-                segment_addr: null_mut::<c_void>(),
-                segment_len: MAX_CHUNK_SIZE,
-            }],
             cmd_args: vec![],
             message_handler: f,
-            segment_len: 0,
-            max_global_long_request_len: 1024,
-            max_global_medium_request_len: 512,
+            tctx: TransportContext::new(team),
             local_rank: Rank::new(0),
             world_size: 0,
-            message_buffers: vec![FxHashMap::default()],
             op_receiver: rx,
             op_sender: Some(tx),
-            next_message_id: 0,
-            sent_fragment_id: vec![0],
-            ack_fragment_id: vec![AtomicUsize::new(0)],
             collective_context: Default::default(),
         }
     }
