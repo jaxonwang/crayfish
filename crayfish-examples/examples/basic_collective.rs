@@ -31,4 +31,8 @@ async fn main() {
     }
     collective::broadcast(root, &mut m).await;
     assert_eq!(m, map_to_broadcast);
+
+    let value = global_id::here() as usize;
+    let values = collective::all_gather(value).await;
+    info!("all gather ranks {:?}", values);
 }

@@ -47,9 +47,9 @@ thread_local! {
     static FINISH_COUNTER:Cell<usize> = Cell::new(0);
 }
 
-fn perform_collective<F, T>(mut f: F) -> T
+fn perform_collective<F, T>(f: F) -> T
 where
-    F: FnMut(&mut dyn CollectiveOperator) -> T,
+    F: FnOnce(&mut dyn CollectiveOperator) -> T,
 {
     FINISH_COUNTER.with(|c| assert_eq!(0, c.get(), "{}", COLL_ERR_MSG_FINISH));
     let mut handle = COLLECTIVE_OPERATOR.lock();
@@ -110,6 +110,19 @@ pub fn barrier() -> impl Future<Output = ()> {
     f.map(|r| {
         r.unwrap();
         perform_collective(|c| c.barrier_done());
+    })
+}
+
+pub fn all_gather<T: RemoteSend>(input: T) -> impl Future<Output = Vec<T>> {
+    let mut bytes = vec![];
+    serialize_into(&mut bytes, &input).unwrap();
+    let f = perform_collective(move |c| c.all_gather(bytes));
+    f.map(|r| {
+        let mut ret: Vec<T> = vec![];
+        for item in r.unwrap().into_iter() {
+            ret.push(deserialize_from(&item[..]).unwrap());
+        }
+        ret
     })
 }
 

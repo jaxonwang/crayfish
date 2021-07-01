@@ -4,6 +4,7 @@ use crate::network::CollectiveOperator;
 use crate::network::MessageHandler;
 use crate::network::MessageSender;
 use crate::network::Rank;
+use crate::serialization;
 use bit_vec::BitVec;
 use futures::channel::oneshot;
 use gex_sys::*;
@@ -11,6 +12,7 @@ use rustc_hash::FxHashMap;
 use std::convert::TryInto;
 use std::os::raw::*;
 use std::ptr::null_mut;
+use std::rc::Rc;
 use std::slice;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -52,81 +54,172 @@ enum CollectiveEventStatus {
 }
 
 trait CollectiveEventTrait {
-    fn test(&mut self, ctx:&mut TransportContext) -> CollectiveEventStatus;
-    fn notify(&mut self);
+    fn test(&mut self, ctx: &mut TransportContext) -> CollectiveEventStatus;
+    fn notify(self: Box<Self>);
     fn set_id(&mut self, id: CollectiveEventId);
+    /// should never assume the order of message received. So that recv can be called at anytime.
+    fn recv(&mut self, data: &[u8]);
 }
 
 struct AllGatherEvent {
     id: CollectiveEventId,
-    input: Vec<u8>,
-    notifier: Option<oneshot::Sender<Vec<Vec<u8>>>>,
+    round: usize,
+    round_received: Vec<bool>, // round_recived[i + 1] == true when receive data from sender in round i
+    buffer: Vec<Vec<u8>>,
+    notifier: oneshot::Sender<Vec<Vec<u8>>>,
+    ctx_data: Rc<ContextData>,
 }
 
-impl AllGatherEvent{
+impl AllGatherEvent {
+    fn new(
+        input: Vec<u8>,
+        notifier: oneshot::Sender<Vec<Vec<u8>>>,
+        ctx_data: Rc<ContextData>,
+    ) -> Self {
+        let world_size = ctx_data.as_ref().world_size;
+        let mut buffer = vec![vec![]; world_size];
+        buffer[0] = input;
+        let mut round_received = vec![false; Self::log2_ceiling(world_size) + 1];
+        round_received[0] = true; // input is ready for the first round
+        AllGatherEvent {
+            id: 0,
+            round: 0,
+            round_received,
+            buffer,
+            notifier,
+            ctx_data,
+        }
+    }
 
+    fn log2_ceiling(num: usize) -> usize {
+        debug_assert!(num > 0);
+        std::mem::size_of::<usize>() * 8 - (num - 1).leading_zeros() as usize
+    }
+    fn here(&self) -> Rank {
+        self.ctx_data.as_ref().local_rank
+    }
+
+    fn world_size(&self) -> usize {
+        self.ctx_data.as_ref().world_size
+    }
+
+    fn term_round(&self) -> usize {
+        Self::log2_ceiling(self.world_size())
+    }
 }
 
 impl CollectiveEventTrait for AllGatherEvent {
-    fn test(&mut self, ctx: &mut TransportContext) -> CollectiveEventStatus{
-            CollectiveEventStatus::Done
+    // bruck algorithm
+    fn test(&mut self, ctx: &mut TransportContext) -> CollectiveEventStatus {
+        let world_size = self.world_size();
+        let term_round = self.term_round();
+
+        if self.round == term_round {
+            return CollectiveEventStatus::Done;
         }
-    fn notify(&mut self){
+        // current round data sent but next round not received yet
+        if !self.round_received[self.round] {
+            return CollectiveEventStatus::Nothing;
+        }
+
+        while self.round_received[self.round] {
+            if self.round == term_round {
+                return CollectiveEventStatus::Done;
+            }
+            let this_round_chunk_num = 2_usize.pow(self.round as u32);
+            // send only change propagated state, doesn't increase round
+            let dst = 2usize.pow(self.round as u32) + self.here().as_usize();
+            let dst = dst % world_size;
+            // don't send data exceeding the total buffer length
+            let chunk_num: usize = if this_round_chunk_num * 2 <= world_size {
+                this_round_chunk_num
+            } else {
+                world_size - this_round_chunk_num
+            };
+
+            CollectiveContext::send(
+                ctx,
+                Rank::new(dst as i32),
+                self.id,
+                &(self.round + 1, &self.buffer[..chunk_num]),
+            );
+            self.round += 1;
+        }
+
+        CollectiveEventStatus::Progress
+    }
+    fn notify(self: Box<Self>) {
+        let mut this = self;
+        // take the item with rank 0 to the begining
+        let rank0_pos = this.world_size() - this.here().as_usize();
+        let mut all: Vec<Vec<u8>> = this.buffer.drain(rank0_pos..).collect();
+        // append the remaining
+        all.append(&mut this.buffer);
+        (*this).notifier.send(all).unwrap();
     }
 
-    fn set_id(&mut self, id: CollectiveEventId){
+    fn set_id(&mut self, id: CollectiveEventId) {
         self.id = id;
     }
 
+    fn recv(&mut self, data: &[u8]) {
+        // NOTE: bad design, handle stream here
+        let (round, got): (usize, Vec<Vec<u8>>) = serialization::deserialize_from(data).unwrap();
+        let start_pos = 2usize.pow(round as u32);
+        for (i, item) in got.into_iter().enumerate() {
+            self.buffer[start_pos + i] = item;
+        }
+        assert!(!self.round_received[round]);
+        self.round_received[round] = true;
+    }
 }
 
 struct GexEvent {
     id: CollectiveEventId,
     gex_handle: gex_Event_t,
     // make notifier a option since oneshot consume itself
-    notifier: Option<oneshot::Sender<()>>,
+    notifier: oneshot::Sender<()>,
 }
 
 impl GexEvent {
     fn new(gex_handle: gex_Event_t, notifier: oneshot::Sender<()>) -> Self {
-        let notifier = Some(notifier);
         GexEvent {
             gex_handle,
             notifier,
-            id: 0
+            id: 0,
         }
     }
 }
 
-
 impl CollectiveEventTrait for GexEvent {
-    fn test(&mut self, _: &mut TransportContext) -> CollectiveEventStatus
-    {
+    fn test(&mut self, _: &mut TransportContext) -> CollectiveEventStatus {
         match gex_event_done(self.gex_handle) {
             true => CollectiveEventStatus::Done,
             false => CollectiveEventStatus::Nothing,
         }
     }
-    fn notify(&mut self) {
-        self.notifier.take().unwrap().send(()).unwrap();
+    fn notify(self: Box<Self>) {
+        (*self).notifier.send(()).unwrap();
     }
-    fn set_id(&mut self, id: CollectiveEventId){
+    fn set_id(&mut self, id: CollectiveEventId) {
         self.id = id;
+    }
+    fn recv(&mut self, _data: &[u8]) {
+        unreachable!()
     }
 }
 
 type MessageType = gex_AM_Arg_t;
 const MESSAGE_TYPE_NORMAL: MessageType = 0;
-const MESSAGE_TYPE_COLL_ALLGATHER: MessageType = 1;
+const MESSAGE_TYPE_COLL: MessageType = 1;
 
-struct TransportContext{
+struct TransportContext {
     team: gex_TM_t,
     segment_len: usize,
     endpoints_data: Vec<EndpointData>,
 
     max_global_long_request_len: usize,
     max_global_medium_request_len: usize,
-
 
     // for sending
     next_message_id: usize,
@@ -137,9 +230,9 @@ struct TransportContext{
     message_buffers: Vec<FxHashMap<MessageId, FragmentBuffer>>,
 }
 
-impl TransportContext{
-    fn new(team: gex_TM_t) -> Self{
-        TransportContext{
+impl TransportContext {
+    fn new(team: gex_TM_t) -> Self {
+        TransportContext {
             team,
             segment_len: 0,
             endpoints_data: vec![],
@@ -148,7 +241,7 @@ impl TransportContext{
             next_message_id: 0,
             sent_fragment_id: vec![],
             ack_fragment_id: vec![],
-            message_buffers: vec![]
+            message_buffers: vec![],
         }
     }
 
@@ -165,7 +258,12 @@ impl TransportContext{
     // interrupt safe, no malloc
     fn send(&mut self, dst: Rank, message_type: MessageType, message: &[u8]) {
         let message_type = message_type as gex_AM_Arg_t;
-        debug!("sending to {} with message len {}", dst, message.len());
+        debug!(
+            "sending to {} with message type {}, len {}",
+            dst,
+            message_type,
+            message.len()
+        );
         // NOTE: not thread safe!
         if message.len() < self.max_global_medium_request_len {
             unsafe {
@@ -236,9 +334,21 @@ impl TransportContext{
             }
         }
     }
-
 }
 
+struct ContextData {
+    local_rank: Rank,
+    world_size: usize,
+}
+
+impl ContextData {
+    fn new(local_rank: Rank, world_size: usize) -> Self {
+        ContextData {
+            local_rank,
+            world_size,
+        }
+    }
+}
 
 pub struct CommunicationContext<T> {
     // endpoint: gex_EP_t, // thread safe handler
@@ -249,35 +359,33 @@ pub struct CommunicationContext<T> {
     message_handler: T,
 
     tctx: TransportContext,
-
-    local_rank: Rank,
-    world_size: usize,
+    ctx_data: Rc<ContextData>,
 
     op_receiver: mpsc::Receiver<NetworkOperation>,
     op_sender: Option<mpsc::Sender<NetworkOperation>>, // set to option, will drop after run
 
     // for collective
-    collective_context: CollectiveContext,
+    cctx: CollectiveContext,
 }
 
 type CollectiveEventId = usize;
 #[derive(Default)]
 struct CollectiveContext {
     collective_events: FxHashMap<CollectiveEventId, Box<dyn CollectiveEventTrait>>,
+    associate_messages: FxHashMap<CollectiveEventId, Vec<Vec<u8>>>, // might recive message when event is not ready
     next_id: CollectiveEventId,
 }
 
 impl CollectiveContext {
     /// return true if there is progress
-    fn poll(&mut self, ctx: &mut TransportContext) -> bool{
+    fn poll(&mut self, ctx: &mut TransportContext) -> bool {
         let mut progress = false;
         let mut done = vec![];
-        for (id, event) in self.collective_events.iter_mut(){
+        for (id, event) in self.collective_events.iter_mut() {
             match event.test(ctx) {
                 CollectiveEventStatus::Done => {
                     done.push(*id);
                     progress = true;
-                    event.notify();
                 }
                 CollectiveEventStatus::Progress => {
                     progress = true;
@@ -288,8 +396,10 @@ impl CollectiveContext {
         if done.is_empty() {
             return progress;
         }
-        for id in done.iter(){
-            self.collective_events.remove(id);
+        for id in done.iter() {
+            debug!("collective event {} done.", id);
+            let event = self.collective_events.remove(id).unwrap();
+            event.notify();
         }
         progress
     }
@@ -299,9 +409,44 @@ impl CollectiveContext {
         let mut event = event;
         event.set_id(self.next_id);
         self.collective_events.insert(self.next_id, Box::new(event));
+        // has got some messages
+        if let Some(messages) = self.associate_messages.remove(&self.next_id) {
+            let event = self.collective_events.get_mut(&self.next_id).unwrap();
+            for message in messages {
+                event.recv(&message[..]);
+            }
+        }
     }
 
-    fn recv_all_gather(&mut self, src: Rank, message: &[u8]){}
+    fn recv(&mut self, _src: Rank, message: &[u8]) {
+        let mut data = message;
+        let event_id: CollectiveEventId = serialization::deserialize_from(&mut data).unwrap();
+        // TODO: remove
+        debug_assert!(data != message);
+        error!("duang------------ event id{}", event_id);
+        if event_id > self.next_id {
+            self.associate_messages
+                .entry(event_id)
+                .or_insert(vec![])
+                .push(data.to_owned());
+        } else {
+            self.collective_events
+                .get_mut(&event_id)
+                .unwrap()
+                .recv(data);
+        }
+        error!("duang^^^^^^event id{}", event_id);
+    }
+
+    fn send<T: ?Sized>(ctx: &mut TransportContext, dst: Rank, event_id: CollectiveEventId, t: &T)
+    where
+        T: serde::Serialize,
+    {
+        let mut data = vec![];
+        serialization::serialize_into(&mut data, &event_id).unwrap();
+        serialization::serialize_into(&mut data, t).unwrap();
+        ctx.send(dst, MESSAGE_TYPE_COLL, &data);
+    }
 }
 unsafe impl<T> Send for CommunicationContext<T> where T: MessageHandler {}
 
@@ -438,7 +583,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let offset = i32_2_to_u64(arg2, arg3) as usize;
     let message_id = i32_2_to_u64(arg4, arg5) as usize;
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
-    let chunk_size = context.tctx.endpoints_data[context.local_rank.as_usize()].segment_len;
+    let chunk_size = context.tctx.endpoints_data[context.here().as_usize()].segment_len;
 
     trace!(
         "long recv {} bytes from {} at mem {:p} {}",
@@ -569,11 +714,13 @@ where
             cmd_args: args,
             message_handler: handler,
             tctx: TransportContext::new(tm),
-            local_rank: Rank::from_gex_rank(gax_system_query_jobrank()),
-            world_size: gax_system_query_jobsize() as usize,
+            ctx_data: Rc::new(ContextData::new(
+                Rank::from_gex_rank(gax_system_query_jobrank()),
+                gax_system_query_jobsize() as usize,
+            )),
             op_receiver: rx,
             op_sender: Some(tx),
-            collective_context: Default::default(),
+            cctx: Default::default(),
         };
 
         logging::set_global_id(context.here().as_i32());
@@ -587,15 +734,15 @@ where
         let max_seg_len = gasnet_get_max_local_segment_size();
         // let seg_len = usize::min(seg_len, max_seg_len);
         let seg_len = max_seg_len;
-        let seg_len = seg_len / GASNET_PAGESIZE as usize / self.world_size
+        let seg_len = seg_len / GASNET_PAGESIZE as usize / self.world_size()
             * GASNET_PAGESIZE as usize
-            * self.world_size; // round to each chunk
-        let chunk_size = seg_len / self.world_size;
+            * self.world_size(); // round to each chunk
+        let chunk_size = seg_len / self.world_size();
         assert!(
             chunk_size > GASNET_PAGESIZE as usize,
             "Segment length: {} is too small for {} peers",
             seg_len,
-            self.world_size
+            self.world_size()
         );
         let seg = gex_segment_attach(self.tctx.team, seg_len);
         self.tctx.segment_len = gax_segment_query_size(seg);
@@ -621,17 +768,13 @@ where
         // TODO: warn if request len too short for udp, ibv...
 
         // set endpoint addr offset
-        for i in 0..self.world_size {
+        for i in 0..self.world_size() {
             let (segment_addr, _segment_len) =
                 gex_ep_query_bound_segment(self.tctx.team, i as gex_Rank_t);
             // assert_eq!(segment_len, self.segment_len); TODO: different machine.
             self.tctx.endpoints_data.push(EndpointData {
                 segment_addr: unsafe {
-                    segment_addr.offset(
-                        (self.local_rank.as_usize() * chunk_size)
-                            .try_into()
-                            .unwrap(),
-                    )
+                    segment_addr.offset((self.here().as_usize() * chunk_size).try_into().unwrap())
                 },
                 segment_len: chunk_size,
             });
@@ -659,7 +802,7 @@ where
     }
 
     fn push_event(&mut self, event: impl CollectiveEventTrait + 'static) {
-        self.collective_context.push(event)
+        self.cctx.push(event)
     }
 
     fn broadcast(&mut self, root: Rank, data: *mut u8, len: usize, notify: oneshot::Sender<()>) {
@@ -676,12 +819,12 @@ where
     }
 
     fn all_gather(&mut self, data: Vec<u8>, notify: oneshot::Sender<Vec<Vec<u8>>>) {
-        // self.push_event(CollectiveEvent::AllGather(AllGatherEvent::new(data, notify)));
+        self.push_event(AllGatherEvent::new(data, notify, self.ctx_data.clone()));
     }
 
     /// return true if there is progress
     fn poll_collective_events(&mut self) -> bool {
-        self.collective_context.poll(&mut self.tctx)
+        self.cctx.poll(&mut self.tctx)
     }
 
     pub fn run(&mut self) {
@@ -691,8 +834,8 @@ where
 
         // message loop
         let mut sleep_us = time::Duration::from_micros(1);
+        let mut progress;
         loop {
-            let mut progress = true;
             gasnet_ampoll();
             progress = self.poll_collective_events();
             match self.op_receiver.try_recv() {
@@ -738,7 +881,7 @@ where
     pub fn recv(&mut self, src: Rank, message_type: MessageType, message: &[u8]) {
         match message_type {
             MESSAGE_TYPE_NORMAL => (self.message_handler)(src, message),
-            MESSAGE_TYPE_COLL_ALLGATHER => self.collective_context.recv_all_gather(src, message),
+            MESSAGE_TYPE_COLL => self.cctx.recv(src, message),
             _ => unreachable!(),
         }
     }
@@ -762,11 +905,11 @@ where
     }
 
     pub fn here(&self) -> Rank {
-        self.local_rank
+        self.ctx_data.as_ref().local_rank
     }
 
     pub fn world_size(&self) -> usize {
-        self.world_size
+        self.ctx_data.as_ref().world_size
     }
 }
 
@@ -840,11 +983,10 @@ mod test {
             cmd_args: vec![],
             message_handler: f,
             tctx: TransportContext::new(team),
-            local_rank: Rank::new(0),
-            world_size: 0,
+            ctx_data: Rc::new(ContextData::new(0, 0)),
             op_receiver: rx,
             op_sender: Some(tx),
-            collective_context: Default::default(),
+            cctx: Default::default(),
         }
     }
     fn set_ptr<T>(ctx: &mut CommunicationContext<T>) {
