@@ -63,7 +63,7 @@ trait CollectiveEventTrait {
 
 struct AllGatherEvent {
     id: CollectiveEventId,
-    round: usize, // at round i means round i-1 data received
+    round: usize,              // at round i means round i-1 data received
     round_received: Vec<bool>, // round_recived[i + 1] == true when receive data from sender in round i
     buffer: Vec<Vec<u8>>,
     notifier: oneshot::Sender<Vec<Vec<u8>>>,
@@ -125,7 +125,7 @@ impl CollectiveEventTrait for AllGatherEvent {
             }
             let this_round_chunk_num = 2_usize.pow(self.round as u32);
             // send only change propagated state, doesn't increase round
-            let dst = world_size + self.here().as_usize() - 2usize.pow(self.round as u32) ;
+            let dst = world_size + self.here().as_usize() - 2usize.pow(self.round as u32);
             let dst = dst % world_size;
             // don't send data exceeding the total buffer length
             let chunk_num: usize = if this_round_chunk_num * 2 <= world_size {
@@ -975,12 +975,25 @@ mod test {
 
     fn fake_context<T: MessageHandler>(f: T) -> CommunicationContext<T> {
         let (tx, rx) = mpsc::channel();
-        let team = null::<*const ()>() as gex_TM_t;
+        let tctx = TransportContext {
+            team: null::<*const ()>() as gex_TM_t,
+            segment_len: 0,
+            endpoints_data: vec![EndpointData {
+                segment_addr: null_mut::<c_void>(),
+                segment_len: MAX_CHUNK_SIZE,
+            }],
+            max_global_long_request_len: 1024,
+            max_global_medium_request_len: 512,
+            next_message_id: 0,
+            sent_fragment_id: vec![0],
+            ack_fragment_id: vec![AtomicUsize::new(0)],
+            message_buffers: vec![FxHashMap::default()],
+        };
         CommunicationContext {
             cmd_args: vec![],
             message_handler: f,
-            tctx: TransportContext::new(team),
-            ctx_data: Rc::new(ContextData::new(0, 0)),
+            tctx,
+            ctx_data: Rc::new(ContextData::new(Rank::new(0), 0)),
             op_receiver: rx,
             op_sender: Some(tx),
             cctx: Default::default(),
