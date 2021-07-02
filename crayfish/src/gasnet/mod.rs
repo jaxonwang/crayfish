@@ -63,7 +63,7 @@ trait CollectiveEventTrait {
 
 struct AllGatherEvent {
     id: CollectiveEventId,
-    round: usize,
+    round: usize, // at round i means round i-1 data received
     round_received: Vec<bool>, // round_recived[i + 1] == true when receive data from sender in round i
     buffer: Vec<Vec<u8>>,
     notifier: oneshot::Sender<Vec<Vec<u8>>>,
@@ -114,9 +114,6 @@ impl CollectiveEventTrait for AllGatherEvent {
         let world_size = self.world_size();
         let term_round = self.term_round();
 
-        if self.round == term_round {
-            return CollectiveEventStatus::Done;
-        }
         // current round data sent but next round not received yet
         if !self.round_received[self.round] {
             return CollectiveEventStatus::Nothing;
@@ -128,7 +125,7 @@ impl CollectiveEventTrait for AllGatherEvent {
             }
             let this_round_chunk_num = 2_usize.pow(self.round as u32);
             // send only change propagated state, doesn't increase round
-            let dst = 2usize.pow(self.round as u32) + self.here().as_usize();
+            let dst = world_size + self.here().as_usize() - 2usize.pow(self.round as u32) ;
             let dst = dst % world_size;
             // don't send data exceeding the total buffer length
             let chunk_num: usize = if this_round_chunk_num * 2 <= world_size {
@@ -141,9 +138,10 @@ impl CollectiveEventTrait for AllGatherEvent {
                 ctx,
                 Rank::new(dst as i32),
                 self.id,
-                &(self.round + 1, &self.buffer[..chunk_num]),
+                &(self.round, &self.buffer[..chunk_num]),
             );
             self.round += 1;
+            // info!("round now increased to {}, received {:?}", self.round, self.round_received);
         }
 
         CollectiveEventStatus::Progress
@@ -165,12 +163,13 @@ impl CollectiveEventTrait for AllGatherEvent {
     fn recv(&mut self, data: &[u8]) {
         // NOTE: bad design, handle stream here
         let (round, got): (usize, Vec<Vec<u8>>) = serialization::deserialize_from(data).unwrap();
+        // error!("receive round {}", round);
         let start_pos = 2usize.pow(round as u32);
         for (i, item) in got.into_iter().enumerate() {
             self.buffer[start_pos + i] = item;
         }
-        assert!(!self.round_received[round]);
-        self.round_received[round] = true;
+        assert!(!self.round_received[round + 1]);
+        self.round_received[round + 1] = true;
     }
 }
 
@@ -423,7 +422,6 @@ impl CollectiveContext {
         let event_id: CollectiveEventId = serialization::deserialize_from(&mut data).unwrap();
         // TODO: remove
         debug_assert!(data != message);
-        error!("duang------------ event id{}", event_id);
         if event_id > self.next_id {
             self.associate_messages
                 .entry(event_id)
@@ -435,7 +433,6 @@ impl CollectiveContext {
                 .unwrap()
                 .recv(data);
         }
-        error!("duang^^^^^^event id{}", event_id);
     }
 
     fn send<T: ?Sized>(ctx: &mut TransportContext, dst: Rank, event_id: CollectiveEventId, t: &T)
