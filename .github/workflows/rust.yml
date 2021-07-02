@@ -25,16 +25,21 @@ jobs:
         run: cargo test -vv
       - name: Run examples
         run: |
-          GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
-          GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
+          GASNET_SPAWNFN=L target/debug/examples/quick_sort 2
+          GASNET_SPAWNFN=L target/debug/examples/basic_gen 2
+          GASNET_SPAWNFN=L target/debug/examples/basic_collective 3 
+          GASNET_SPAWNFN=L target/debug/examples/basic_collective 4
+          GASNET_SPAWNFN=L target/debug/examples/basic_collective 16
+          GASNET_SPAWNFN=L target/debug/examples/basic_collective 17
       - name: Install Valgrind
         run: |
           sudo apt-get update -y
           sudo apt-get install -y valgrind
       - name: Run valgrind test-mem
         run: |
-          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/quick_sort 2
-          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN="L" target/debug/examples/basic_gen 2
+          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN=L target/debug/examples/quick_sort 2
+          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN=L target/debug/examples/basic_gen 2
+          valgrind  --leak-check=full --show-leak-kinds=all env GASNET_SPAWNFN=L target/debug/examples/basic_collective 2
 
   test-build:
     name: test-build
