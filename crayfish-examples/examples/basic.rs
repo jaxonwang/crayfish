@@ -5,7 +5,7 @@ use crayfish::activity::TaskItemBuilder;
 use crayfish::activity::TaskItemExtracter;
 use crayfish::args::RemoteSend;
 use crayfish::essence;
-use crayfish::global_id;
+use crayfish::place;
 use crayfish::global_id::ActivityIdMethods;
 use crayfish::logging::*;
 use crayfish::place::Place;
@@ -91,8 +91,8 @@ async fn real_fn(ctx: &mut impl ApgasContext, a: A, b: B, c: i32) -> R {
     // macro
     debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
     if c < 200 {
-        let here = global_id::here();
-        let world_size = global_id::world_size();
+        let here = place::here();
+        let world_size = place::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
         async_create_no_wait_for_fn_id_0(ctx.spawn(), dst_place, a.clone(), b.clone(), c + 1);
     }
@@ -151,7 +151,7 @@ fn async_create_for_fn_id_0(
     let fn_id: FunctionLabel = 0; // macro
 
     let f = wait_single::<R>(my_activity_id); // macro
-    if dst_place == global_id::here() {
+    if dst_place == place::here() {
         crayfish::spawn(execute_and_send_fn0(my_activity_id, true, a, b, c)); // macro
     } else {
         trace!("spawn activity:{} at place: {}", my_activity_id, dst_place);
@@ -177,7 +177,7 @@ fn async_create_no_wait_for_fn_id_0(
     // macro
     let fn_id: FunctionLabel = 0; // macro
 
-    if dst_place == global_id::here() {
+    if dst_place == place::here() {
         // no wait, set flag = flase
         crayfish::spawn(execute_and_send_fn0(my_activity_id, false, a, b, c)); // macro
     } else {
@@ -193,12 +193,12 @@ fn async_create_no_wait_for_fn_id_0(
 // desugered finish
 #[crayfish::main]
 async fn finish() {
-    if global_id::here() == 0 {
+    if place::here() == 0 {
         let mut ctx = ConcreteContext::new_frame();
         // ctx contains a new finish id now
         //
-        let here = global_id::here();
-        let world_size = global_id::world_size();
+        let here = place::here();
+        let world_size = place::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
         // let f = async_create_for_fn_id_0(&mut ctx, dst_place, A { value: 1 }, B { value: 2 }, 3);
         //

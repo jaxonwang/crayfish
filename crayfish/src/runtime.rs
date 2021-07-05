@@ -15,6 +15,7 @@ use crate::logging::*;
 use crate::meta_data;
 use crate::network::MessageSender;
 use crate::network::Rank;
+use crate::place;
 use crayfish_trace_macros::profiling_start_internal;
 use crayfish_trace_macros::profiling_stop_internal;
 use once_cell::sync::Lazy;
@@ -312,7 +313,7 @@ where
     #[allow(clippy::boxed_local)] // allow since TaskItem is going to be sent
     fn send(&mut self, item: Box<TaskItem>) {
         // should never send to local, in my implementation
-        debug_assert!(item.place() != global_id::here());
+        debug_assert!(item.place() != place::here());
         let idx = item.place() as usize;
         let dst_buffer = &mut self.out_buffers[idx];
         if dst_buffer.0.is_empty() {
@@ -392,7 +393,7 @@ where
 
     // item is received from local or remote
     fn handle_item(&mut self, item: Box<TaskItem>) {
-        if item.place() == global_id::here() {
+        if item.place() == place::here() {
             if item.is_ret() {
                 trace!("got return item to self {:?}", item);
                 // if is finish but waited here, the item.place() == here()
@@ -696,7 +697,7 @@ mod test {
         result_value: T,
         sub_activities: Vec<ActivityId>,
     ) {
-        let here = global_id::here();
+        let here = place::here();
         let mut builder = TaskItemBuilder::new(0, here, aid);
         builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
         builder.sub_activities(sub_activities);
@@ -709,7 +710,7 @@ mod test {
     }
 
     fn send_2_local_panic(aid: ActivityId, sub_activities: Vec<ActivityId>) {
-        let here = global_id::here();
+        let here = place::here();
         let mut builder = TaskItemBuilder::new(0, here, aid);
         builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
         builder.sub_activities(sub_activities);
@@ -727,7 +728,7 @@ mod test {
         result_value: T,
         sub_activities: Vec<ActivityId>,
     ) {
-        let here = global_id::here();
+        let here = place::here();
         let mut builder = TaskItemBuilder::new(0, here, aid);
         builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
         builder.sub_activities(sub_activities);
@@ -740,7 +741,7 @@ mod test {
     }
 
     fn send_1_local(aid: ActivityId, sub_activities: Vec<ActivityId>) {
-        let here = global_id::here();
+        let here = place::here();
         let mut builder = TaskItemBuilder::new(0, here, aid);
         builder.ret(thread::Result::<()>::Ok(())); // for tree, no ret
         builder.sub_activities(sub_activities);
@@ -752,7 +753,7 @@ mod test {
         let _e = ExecutorHubSetUp::new_with_fake();
         // new context
         let mut ctx = ConcreteContext::new_frame();
-        let here = global_id::here();
+        let here = place::here();
         assert_eq!(here, ctx.finish_id.get_place());
         // register a sub activity
         let new_aid = ctx.spawn();
@@ -872,7 +873,7 @@ mod test {
     fn test_local_worker_task_queue() {
         let _e = ExecutorHubSetUp::new_with_fake();
         let mut worker_receiver = take_worker_task_receiver();
-        let mut builder = TaskItemBuilder::new(1, global_id::here(), 3);
+        let mut builder = TaskItemBuilder::new(1, place::here(), 3);
         builder.arg(1usize);
         builder.arg(0.5f64);
         builder.arg(A { value: 123 });
@@ -880,7 +881,7 @@ mod test {
         let item = worker_receiver.blocking_recv().unwrap();
         let mut e = TaskItemExtracter::new(*item);
         assert_eq!(e.fn_id(), 1);
-        assert_eq!(e.place(), global_id::here());
+        assert_eq!(e.place(), place::here());
         assert_eq!(e.activity_id(), 3);
         assert_eq!(e.arg::<usize>(), 1);
         assert_eq!(e.arg::<f64>(), 0.5);
@@ -978,7 +979,7 @@ mod test {
         let factory1 = Box::new(SquashBufferFactory::new());
         let distrbutor = Distributor::new(factory, 10, MockSender { sender: bytes_t }, buf_r);
 
-        let dst_place: Place = 1;
+        let dst_place: crate::place::Place = 1;
         let fid_handle_usize = 1;
         let fid_handle_squash = 2;
 

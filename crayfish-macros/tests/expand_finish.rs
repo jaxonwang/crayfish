@@ -10,17 +10,17 @@ async fn baz() -> i32 {
 #[allow(unused_variables)]
 async fn bar(a: i32, b: i64, c: Vec<usize>, d: String) -> i32 {
     finish!{
-        ff!(crayfish::global_id::here(), baz());
+        ff!(crayfish::place::here(), baz());
     };
     let a = finish!{
-        ff!(crayfish::global_id::here(), baz());
-        let ret = at!(crayfish::global_id::here(), baz());
+        ff!(crayfish::place::here(), baz());
+        let ret = at!(crayfish::place::here(), baz());
         ret.await
     };
 
     finish!(
-        ff!(crayfish::global_id::here(), baz());
-        let ret = at!(crayfish::global_id::here(), baz());
+        ff!(crayfish::place::here(), baz());
+        let ret = at!(crayfish::place::here(), baz());
         ret.await
     ) + a
 }

@@ -12,15 +12,15 @@ async fn baz() -> i32 {
 #[activity]
 #[allow(unused_variables)]
 async fn bar(a: i32, b: i64, c: Vec<usize>, d: String) -> i32 {
-    let ret = at!(crayfish::global_id::here(), baz());
+    let ret = at!(crayfish::place::here(), baz());
     ret.await
 }
 
 #[activity]
 #[allow(unused_variables)]
 async fn foo(a: i32, b: i64, c: Vec<usize>, d: String) -> i32 {
-    let ret = ff!(crayfish::global_id::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
-    let ret = at!(crayfish::global_id::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
+    let ret = ff!(crayfish::place::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
+    let ret = at!(crayfish::place::here(), bar(123, 43, vec![2,3,4], String::from("adsa")));
     ret.await
 }
 
@@ -39,7 +39,7 @@ async fn bar_box(a: i32, b: i64, c: Vec<usize>, d: String) -> usize {
     if a == 0 {
         123
     }else{
-        at!(crayfish::global_id::here(), bar_impl(a-1)).await
+        at!(crayfish::place::here(), bar_impl(a-1)).await
     }
 }
 

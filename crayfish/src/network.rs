@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use crate::global_id::Place;
+use crate::place::Place;
 use std::fmt;
 use futures::channel::oneshot;
 

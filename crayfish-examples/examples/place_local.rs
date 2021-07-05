@@ -1,8 +1,8 @@
 use crayfish::collective;
 use crayfish::ff;
 use crayfish::finish;
-use crayfish::global_id::here;
-use crayfish::global_id::world_size;
+use crayfish::place::here;
+use crayfish::place::world_size;
 use crayfish::logging::*;
 use crayfish::place::Place;
 use crayfish::shared;

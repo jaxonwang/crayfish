@@ -1,6 +1,5 @@
-use crayfish::global_id;
-use crayfish::global_id::here;
-use crayfish::global_id::world_size;
+use crayfish::place::here;
+use crayfish::place::world_size;
 use crayfish::logging::*;
 use crayfish::place::Place;
 use rand::seq::SliceRandom;
@@ -39,7 +38,7 @@ async fn quick_sort(
 #[crayfish::main]
 async fn main() -> Result<(), std::io::Error> {
     Ok(crayfish::finish!{
-        if global_id::here() == 0 {
+        if here() == 0 {
             // ctx contains a new finish id now
             let mut rng = rand::rngs::StdRng::from_entropy();
             let mut nums: Vec<usize> = (0..1000).collect();

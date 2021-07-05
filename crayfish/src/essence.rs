@@ -7,7 +7,6 @@ use crate::activity::TaskItemBuilder;
 use crate::args::RemoteSend;
 use crate::collective;
 use crate::executor;
-use crate::global_id;
 use crate::global_id::ActivityIdMethods;
 use crate::global_id::FinishIdMethods;
 use crate::logging;
@@ -16,6 +15,7 @@ use crate::meta_data;
 use crate::network::context::CommunicationContext;
 use crate::network::MessageHandler;
 use crate::network::Rank;
+use crate::place;
 use crate::runtime::init_task_item_channels;
 use crate::runtime::init_worker_task_queue;
 use crate::runtime::message_recv_callback;
@@ -109,8 +109,8 @@ where
     // init static data for communications
     init_worker_task_queue();
     init_task_item_channels();
-    global_id::init_here(context.here().as_place());
-    global_id::init_world_size(world_size);
+    place::init_here(context.here().as_place());
+    place::init_world_size(world_size);
 
     // init collective operator, which will be used by main
     init_collective_operator(&context);
@@ -175,7 +175,7 @@ where
     hub_thread.join().unwrap();
     network_thread.join().unwrap();
     drop(rt);
-    #[cfg(feature="trace")]
+    #[cfg(feature = "trace")]
     crate::trace::print_profiling();
     info!("exit gracefully");
 

@@ -1,10 +1,11 @@
+use crate::place::here;
+use crate::place::Place;
 use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
 use std::cell::Cell;
 use std::sync::Mutex;
+
 extern crate once_cell;
 
-pub type Place = u16;
 pub type WorkerId = u16;
 pub type FinishId = u64;
 pub type ActivityId = u128;
@@ -44,48 +45,13 @@ impl ActivityIdMethods for ActivityId {
     }
 }
 
-// TODO move these world info to another mod
-static HERE_STATIC: OnceCell<Place> = OnceCell::new();
-static WORLD_SIZE_STATIC: OnceCell<usize> = OnceCell::new();
 // two level mutex here, but I think the code is clear
 static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(|| Mutex::new(0));
 
 thread_local! {
-    static HERE_LOCAL: Cell<Option<Place>> = Cell::new(None);
-    static WORLD_SIZE: Cell<Option<usize>> = Cell::new(None);
     static WORKER_ID: Cell<Option<WorkerId>> = Cell::new(None);
     static NEXT_FINISH_LOCAL_ID: Cell<FinishLocalId> = Cell::new(0); // start from 1
     static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
-}
-
-pub(crate) fn init_here(here: Place) {
-    HERE_STATIC.set(here).unwrap();
-}
-
-pub(crate) fn init_world_size(size: usize){
-    WORLD_SIZE_STATIC.set(size).unwrap();
-}
-
-pub fn here() -> Place {
-    HERE_LOCAL.with(|h| match h.get() {
-        Some(p) => p,
-        None => {
-            let p = HERE_STATIC.get().expect("here place id is not initialized");
-            h.set(Some(*p));
-            here()
-        }
-    })
-}
-
-pub fn world_size() -> usize{
-    WORLD_SIZE.with(|h| match h.get() {
-        Some(p) => p,
-        None => {
-            let p = WORLD_SIZE_STATIC.get().expect("world size is not initialized");
-            h.set(Some(*p));
-            world_size()
-        }
-    })
 }
 
 pub(crate) fn my_worker_id() -> WorkerId {
@@ -133,7 +99,7 @@ pub(crate) fn new_global_activity_id(fid: FinishId) -> ActivityId {
 }
 
 #[cfg(test)]
-pub mod test {
+pub(crate) mod test {
 
     use super::*;
     use std::collections::HashSet;
@@ -142,10 +108,13 @@ pub mod test {
     use std::sync::MutexGuard;
     use std::thread;
 
-    const TEST_HERE: Place = 7;
+    pub const TEST_HERE: Place = 7;
     static TEST_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
     fn global_id_reset_everything() {
+        use crate::place::HERE_LOCAL;
+        use crate::place::HERE_STATIC;
+
         match HERE_STATIC.set(TEST_HERE) {
             // only set once
             _ => (),
@@ -168,23 +137,6 @@ pub mod test {
             };
             global_id_reset_everything();
             ret
-        }
-    }
-
-    #[test]
-    fn test_here() {
-        let _a = TestGuardForStatic::new();
-        let mut threads = vec![];
-        for _ in 0..8 {
-            threads.push(thread::spawn(|| {
-                assert!(HERE_LOCAL.with(|h| h.get().is_none()));
-                assert_eq!(here(), TEST_HERE);
-                assert!(HERE_LOCAL.with(|h| h.get().is_some()));
-                assert_eq!(here(), TEST_HERE);
-            }));
-        }
-        for t in threads {
-            t.join().unwrap();
         }
     }
 

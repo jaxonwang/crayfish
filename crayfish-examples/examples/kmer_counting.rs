@@ -1,6 +1,6 @@
 use crayfish::collective;
-use crayfish::global_id;
-use crayfish::global_id::world_size;
+use crayfish::place::here;
+use crayfish::place::world_size;
 use crayfish::inventory;
 use crayfish::logging::*;
 use crayfish::place::Place;
@@ -85,7 +85,7 @@ fn update_count_table(count_table: &mut CountTable, kmer: KMer, kmerdata: KMerDa
 fn get_partition(kmer: &KMer) -> Place {
     let mut hasher = DefaultHasher::new();
     kmer.hash(&mut hasher);
-    (hasher.finish() % global_id::world_size() as u64) as Place
+    (hasher.finish() % world_size() as u64) as Place
 }
 
 #[crayfish::activity]
@@ -132,7 +132,7 @@ async fn kmer_counting(reads: Reads, final_ptr: PlaceLocalWeak<Mutex<CountTable>
 async fn inner_main() {
     let count_table_ptr = PlaceLocal::new(Mutex::new(CountTable::new()));
     collective::barrier().await;
-    if global_id::here() == 0 {
+    if here() == 0 {
         // ctx contains a new finish id now
         let chunk_size = 4096;
         let args = std::env::args().collect::<Vec<_>>();

@@ -209,7 +209,7 @@ impl HelperFunctionsGenerator {
         ) {
             let fn_id = #fn_id; // macro
 
-            if dst_place == #crayfish_path::global_id::here() {
+            if dst_place == #crayfish_path::place::here() {
                 #crayfish_path::spawn(#execute_fn_name(a_id, true, #(#param_ident_list),*)); // macro
             } else {
                 // trace!("spawn activity:{} at place: {}", a_id, dst_place);
@@ -251,7 +251,7 @@ impl HelperFunctionsGenerator {
             let fn_id = #fn_id; // macro
 
             let f = #crayfish_path::runtime::wait_single::<#ret_type>(a_id); // macro
-            if dst_place == #crayfish_path::global_id::here() {
+            if dst_place == #crayfish_path::place::here() {
                 #crayfish_path::spawn(#execute_fn_name(a_id, true, #(#param_ident_list),*)); // macro
             } else {
                 // trace!("spawn activity:{} at place: {}", a_id, dst_place);

@@ -136,7 +136,7 @@ fn print_metric_table(table_name: &str, table: &DurationTable) {
     };
     let mut orderd_record: Vec<_> = table.iter().collect();
     orderd_record.sort_unstable_by_key(|(_, record)| std::cmp::Reverse(record.acc));
-    let here = crate::global_id::here();
+    let here = crate::place::here();
 
     let mut show: String = String::default();
     let place_and_thread = format!("[{}:{}]", here, table_name);

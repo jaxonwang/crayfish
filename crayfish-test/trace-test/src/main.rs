@@ -1,6 +1,5 @@
 use crayfish::args::RemoteSend;
-use crayfish::global_id;
-use crayfish::global_id::Place;
+use crayfish::place::Place;
 use crayfish::logging::*;
 use std::cmp::Ordering;
 use std::convert::TryInto;
@@ -77,8 +76,8 @@ async fn real_fn(a: A, b: B, c: i32) -> R {
     // macro
     debug!("execute func with args: {:?}, {:?}, {}", a, b, c);
     if c < 200 {
-        let here = global_id::here();
-        let world_size = global_id::world_size();
+        let here = place::here();
+        let world_size = place::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
         crayfish::ff!(dst_place, real_fn(a.clone(), b.clone(), c + 1));
     }
@@ -87,10 +86,10 @@ async fn real_fn(a: A, b: B, c: i32) -> R {
 
 async fn finish() {
     crayfish::finish! {
-    if global_id::here() == 0 {
+    if place::here() == 0 {
 
-        let here = global_id::here();
-        let world_size = global_id::world_size();
+        let here = place::here();
+        let world_size = place::world_size();
         let dst_place = ((here + 1) as usize % world_size) as Place;
         crayfish::ff!(dst_place, real_fn(A { value: 2 }, B { value: 3 }, 1));
 

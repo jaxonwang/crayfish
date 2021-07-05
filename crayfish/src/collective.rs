@@ -1,6 +1,6 @@
 use crate::args::RemoteSend;
-use crate::global_id;
-use crate::global_id::Place;
+use crate::place::here;
+use crate::place::Place;
 use crate::network;
 use crate::network::CollectiveOperator;
 use crate::serialization::deserialize_from;
@@ -76,7 +76,7 @@ pub fn broadcast<'a, T: RemoteSend>(root: Place, value: &'a mut T) -> BoxFuture<
     // broadcast size first. Then perform value broadcast
     let mut bytes: Vec<u8> = vec![];
     let mut serialized_len = 0;
-    let here = global_id::here();
+    let here = here();
     if here == root {
         serialize_into(&mut bytes, value).unwrap();
         serialized_len = bytes.len();
