@@ -257,7 +257,7 @@ impl TransportContext {
     // interrupt safe, no malloc
     fn send(&mut self, dst: Rank, message_type: MessageType, message: &[u8]) {
         let message_type = message_type as gex_AM_Arg_t;
-        debug!(
+        trace!(
             "sending to {} with message type {}, len {}",
             dst,
             message_type,
@@ -396,7 +396,7 @@ impl CollectiveContext {
             return progress;
         }
         for id in done.iter() {
-            debug!("collective event {} done.", id);
+            trace!("collective event {} done.", id);
             let event = self.collective_events.remove(id).unwrap();
             event.notify();
         }
@@ -602,7 +602,7 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     if message_len <= chunk_size {
         let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
-        debug!("receive message of len {} from {}", message_len, src);
+        trace!("receive message of len {} from {}", message_len, src);
         debug_assert!(offset == 0);
         call_handler(buf);
         TK::reply_short(token);
@@ -727,9 +727,9 @@ where
     pub fn init(&mut self) {
         // the segment is devided into world_size chunks, reserved for each peer
         // init the segment
-        // let seg_len: usize = 2 * 1024 * 1024 * 1024; // 2 GB
         let max_seg_len = gasnet_get_max_local_segment_size();
-        // let seg_len = usize::min(seg_len, max_seg_len);
+        // limit each rank use 64 MB at most
+        let max_seg_len = usize::min(max_seg_len, 64 * 1024 * 1024 * self.ctx_data.world_size);
         let seg_len = max_seg_len;
         let seg_len = seg_len / GASNET_PAGESIZE as usize / self.world_size()
             * GASNET_PAGESIZE as usize
