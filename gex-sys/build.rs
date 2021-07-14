@@ -114,11 +114,15 @@ mod mpi_probe {
         };
 
         let mut ld_flags = vec![];
+        // some mpicc output -L"/this", we need to remove \"
+        let real_path = |p: &str| {
+            p.trim_matches('\"').to_owned()
+        };
         for dir in &lib.lib_paths {
-            ld_flags.push(format!("-L{}", dir.display()));
+            ld_flags.push(format!("-L{}", real_path(dir.to_str().unwrap())));
         }
         for lib in &lib.libs {
-            ld_flags.push(format!("-l{}", lib));
+            ld_flags.push(format!("-l{}", real_path(&lib)));
         }
         println!("cargo:rustc-flags={}", ld_flags.join(" "));
     }
