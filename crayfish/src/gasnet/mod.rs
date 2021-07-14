@@ -270,13 +270,14 @@ impl TransportContext {
                         MEDIUM_HANDLER_INDEX,
                         src_addr,
                         send_size as size_t,
-                        gex_event_now(), //block
+                        gex_event_group(), //non-block
                         a0, a1, a2, a3, a4, a5, message_type
                     )
                 };
             // trace!("send offset {} bytes {}", offset, send_size);
             offset += send_size;
         }
+        gex_nbi_wait_am_lc();
     }
 }
 
