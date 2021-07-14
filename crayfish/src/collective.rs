@@ -26,6 +26,10 @@ pub(crate) fn take_coll() -> Box<dyn CollectiveOperator> {
     COLLECTIVE_OPERATOR.lock().take().unwrap()
 }
 
+pub fn take_and_release_coll() {
+    take_coll();
+}
+
 // const COLL_ERR_MSG: &str = "collective operation is only allowed in main thread";
 const COLL_ERR_MSG_FINISH: &str = "collective operation is not allowed in any finish block";
 
