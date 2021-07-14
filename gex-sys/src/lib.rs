@@ -374,6 +374,39 @@ pub unsafe fn gex_am_reqeust_medium1(
     ));
 }
 
+pub unsafe fn gex_am_reqeust_medium7(
+    tm: gex_TM_t,
+    rank: gex_Rank_t,
+    handler: gex_AM_Index_t,
+    source_addr: *const ::std::os::raw::c_void,
+    nbytes: size_t,
+    lc_opt: *mut gex_Event_t,
+    arg0: gex_AM_Arg_t,
+    arg1: gex_AM_Arg_t,
+    arg2: gex_AM_Arg_t,
+    arg3: gex_AM_Arg_t,
+    arg4: gex_AM_Arg_t,
+    arg5: gex_AM_Arg_t,
+    arg6: gex_AM_Arg_t,
+) {
+    assert_gasnet_ok(gex_AM_RequestMedium_Wrap7(
+        tm,
+        rank,
+        handler,
+        source_addr,
+        nbytes,
+        lc_opt,
+        0,
+        arg0,
+        arg1,
+        arg2,
+        arg3,
+        arg4,
+        arg5,
+        arg6,
+    ));
+}
+
 pub unsafe fn gex_am_reqeust_long0(
     tm: gex_TM_t,
     rank: gex_Rank_t,

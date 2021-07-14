@@ -36,6 +36,7 @@ pub fn main() {
         let mut context = context;
         essence::init_collective_operator(&context);
         context.init();
+        scope.spawn(move |_| context.run());
         scope.spawn(|_| {
             let sender = sender;
             for p in 0..world {
@@ -47,8 +48,9 @@ pub fn main() {
             for p in 0..world {
                 sender.send_msg(network::Rank::new(p as i32), payload.clone());
             }
+            // to stop the context
+            crayfish::collective::take_and_release_coll();
         });
-        context.run();
     })
     .unwrap();
 
