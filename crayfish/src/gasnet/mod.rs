@@ -244,16 +244,6 @@ impl TransportContext {
         }
     }
 
-    fn wait_send_handled(&self, dst_idx: usize) {
-        // loop until ack
-        // TODO: sleep
-        while self.ack_fragment_id[dst_idx].load(Ordering::Acquire)
-            != self.sent_fragment_id[dst_idx]
-        {
-            gasnet_ampoll();
-        }
-    }
-
     // interrupt safe, no malloc
     fn send(&mut self, dst: Rank, message_type: MessageType, message: &[u8]) {
         let message_type = message_type as gex_AM_Arg_t;
@@ -264,75 +254,36 @@ impl TransportContext {
             message.len()
         );
         // NOTE: not thread safe!
-        if message.len() < self.max_global_medium_request_len {
-            unsafe {
-                gex_am_reqeust_medium1(
-                    self.team,
-                    dst.gex_rank(),
-                    MEDIUM_HANDLER_INDEX,
-                    message.as_ptr() as *const c_void,
-                    message.len() as size_t,
-                    gex_event_now(), // block
-                    message_type,
-                )
-            };
-        } else {
             let message_id = self.next_message_id;
             self.next_message_id += 1;
             let mut offset: usize = 0;
             let dst_idx = dst.as_usize();
-            let chunk_size = self.endpoints_data[dst_idx].segment_len;
-            let packet_size = self.max_global_long_request_len;
+            let packet_size = self.max_global_medium_request_len;
 
             while offset < message.len() {
-                // wait till last finished
-                self.wait_send_handled(dst_idx);
                 let rest = &message[offset..];
-                let old_offset = offset;
 
-                if rest.len() > packet_size {
-                    let src_addr = message[packet_size..].as_ptr() as *const c_void;
-                    let dst_addr =
-                        unsafe { self.endpoints_data[dst_idx].segment_addr.add(packet_size) };
-                    let send_size = usize::min(rest.len() - packet_size, chunk_size);
-                    unsafe {
-                        gex_rma_putblocking(
-                            self.team,
-                            dst.gex_rank(),
-                            dst_addr,
-                            src_addr,
-                            send_size as u64,
-                        );
-                    }
-                    offset += send_size;
-                }
+                let src_addr = rest.as_ptr() as *const c_void;
+                let send_size = usize::min(rest.len(), packet_size);
 
                 let (a0, a1) = u64_to_i32_2(message.len() as u64);
-                let (a2, a3) = u64_to_i32_2(old_offset as u64);
+                let (a2, a3) = u64_to_i32_2(offset as u64);
                 let (a4, a5) = u64_to_i32_2(message_id as u64);
-                let send_slice = &message[old_offset..];
-                let send_size = usize::min(send_slice.len(), packet_size);
                 #[rustfmt::skip]
                 unsafe {
-                    gex_am_reqeust_long7(
+                    gex_am_reqeust_medium7(
                         self.team,
                         dst.gex_rank(),
-                        LONG_HANDLER_INDEX,
-                        send_slice.as_ptr() as *const c_void,
+                        MEDIUM_HANDLER_INDEX,
+                        src_addr,
                         send_size as size_t,
-                        self.endpoints_data[dst_idx].segment_addr,
-                        0,
-                        gex_event_group(), // non block
+                        gex_event_now(), //block
                         a0, a1, a2, a3, a4, a5, message_type
                     )
                 };
                 // trace!("send offset {} bytes {}", offset, send_size);
                 offset += send_size;
-                self.sent_fragment_id[dst_idx] += 1;
-                gex_nbi_wait_am_lc(); // wait until message buffer can be safely released
             }
-        }
-    }
 }
 
 struct ContextData {
@@ -557,11 +508,10 @@ extern "C" fn recv_medium<T: MessageHandler>(
 
 trait RankFromToken {
     fn from_token(token: gex_Token_t) -> Rank;
-    fn reply_short(token: gex_Token_t);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn _recv_long<TK: RankFromToken, T: MessageHandler>(
+fn _recv_message<TK: RankFromToken, T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     _nbytes: size_t,
@@ -580,14 +530,12 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
     let offset = i32_2_to_u64(arg2, arg3) as usize;
     let message_id = i32_2_to_u64(arg4, arg5) as usize;
     let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
-    let chunk_size = context.tctx.endpoints_data[context.here().as_usize()].segment_len;
 
     trace!(
-        "long recv {} bytes from {} at mem {:p} {}",
+        "medium recv {} bytes from {} at mem {:p}",
         _nbytes,
         src,
         buf,
-        chunk_size
     );
 
     let call_handler = |buf: &[u8]| unsafe {
@@ -599,23 +547,22 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
         (*(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>)).recv(src, message_type, buf);
     };
 
-    if message_len <= chunk_size {
+    let package_size = context.max_global_medium_request_len;
+    if message_len <= packet_size {
         let buf = unsafe { slice::from_raw_parts(buf as *const u8, message_len) };
         // whole message received
         trace!("receive message of len {} from {}", message_len, src);
         debug_assert!(offset == 0);
         call_handler(buf);
-        TK::reply_short(token);
         return;
     }
 
     // now message is fragmented
 
-    let buf = unsafe { slice::from_raw_parts(buf as *const u8, chunk_size) };
-    let buf = &buf[..usize::min(message_len - offset, chunk_size)];
+    let buf = unsafe { slice::from_raw_parts(buf as *const u8, _nbytes) };
     let fg_buffer = context.tctx.message_buffers[src_idx]
         .entry(message_id)
-        .or_insert_with(|| FragmentBuffer::with_length(message_len, chunk_size));
+        .or_insert_with(|| FragmentBuffer::with_length(message_len, packet_size));
     fg_buffer.save(offset, buf);
 
     if fg_buffer.all_done() {
@@ -623,10 +570,9 @@ fn _recv_long<TK: RankFromToken, T: MessageHandler>(
         call_handler(buf);
         context.tctx.message_buffers[src_idx].remove(&message_id);
     }
-    TK::reply_short(token);
 }
 
-extern "C" fn recv_long<T: MessageHandler>(
+extern "C" fn recv_message<T: MessageHandler>(
     token: gex_Token_t,
     buf: *const c_void,
     nbytes: size_t,
@@ -644,21 +590,8 @@ extern "C" fn recv_long<T: MessageHandler>(
             let t_info = gex_token_info(token);
             Rank::from_gex_rank(t_info.gex_srcrank)
         }
-        fn reply_short(token: gex_Token_t) {
-            gex_am_reply_short0(token, ACK_REPLY_INDEX);
-        }
     }
-    _recv_long::<Getter, T>(token, buf, nbytes, a0, a1, a2, a3, a4, a5, a6);
-}
-
-/// when received reply from remote indicating the whole message is received
-extern "C" fn ack_reply<T: MessageHandler>(token: gex_Token_t) {
-    let t_info = gex_token_info(token);
-    let src = t_info.gex_srcrank as usize;
-
-    let context = unsafe { &mut *(GLOBAL_CONTEXT_PTR as *mut CommunicationContext<T>) };
-
-    let _a = context.tctx.ack_fragment_id[src].fetch_add(1, Ordering::Release);
+    _recv_message::<Getter, T>(token, buf, nbytes, a0, a1, a2, a3, a4, a5, a6);
 }
 
 const MEDIUM_HANDLER_INDEX: gex_AM_Index_t = GEX_AM_INDEX_BASE as u8;
@@ -669,21 +602,9 @@ fn prepare_entry_table<T: MessageHandler>() -> Entrytable {
     unsafe {
         tb.add_medium_req(
             MEDIUM_HANDLER_INDEX,
-            recv_medium::<T> as *const (),
-            1,
-            Some("recv_medium"),
-        );
-        tb.add_long_req(
-            LONG_HANDLER_INDEX,
-            recv_long::<T> as *const (),
+            recv_message::<T> as *const (),
             7,
-            Some("recv_long"),
-        );
-        tb.add_short_reply(
-            ACK_REPLY_INDEX,
-            ack_reply::<T> as *const (),
-            0,
-            Some("ack_reply"),
+            Some("recv_message"),
         );
     }
     tb
@@ -728,26 +649,14 @@ where
         // the segment is devided into world_size chunks, reserved for each peer
         // init the segment
         let max_seg_len = gasnet_get_max_local_segment_size();
-        // limit each rank use 64 MB at most
-        let max_seg_len = usize::min(max_seg_len, 64 * 1024 * 1024 * self.ctx_data.world_size);
-        let seg_len = max_seg_len;
-        let seg_len = seg_len / GASNET_PAGESIZE as usize / self.world_size()
-            * GASNET_PAGESIZE as usize
-            * self.world_size(); // round to each chunk
-        let chunk_size = seg_len / self.world_size();
-        assert!(
-            chunk_size > GASNET_PAGESIZE as usize,
-            "Segment length: {} is too small for {} peers",
-            seg_len,
-            self.world_size()
-        );
+        // limit each rank use 64MB at most
+        let seg_len = usize::min(max_seg_len, 64 * 1024 * 1024 );
         let seg = gex_segment_attach(self.tctx.team, seg_len);
         self.tctx.segment_len = gax_segment_query_size(seg);
         debug!(
-            "Max buffer length: {} KB. Round buffer length to {} KB, chunk size:{} KB",
+            "Try to set buffer length: {} KB. Got {} KB",
             max_seg_len / 1024,
             self.tctx.segment_len / 1024,
-            chunk_size / 1024
         );
 
         // set max global long
@@ -766,14 +675,12 @@ where
 
         // set endpoint addr offset
         for i in 0..self.world_size() {
-            let (segment_addr, _segment_len) =
+            let (segment_addr, segment_len) =
                 gex_ep_query_bound_segment(self.tctx.team, i as gex_Rank_t);
             // assert_eq!(segment_len, self.segment_len); TODO: different machine.
             self.tctx.endpoints_data.push(EndpointData {
-                segment_addr: unsafe {
-                    segment_addr.offset((self.here().as_usize() * chunk_size).try_into().unwrap())
-                },
-                segment_len: chunk_size,
+                segment_addr,
+                segment_len,
             });
             // prepare buffer
             self.tctx.message_buffers.push(FxHashMap::default());
