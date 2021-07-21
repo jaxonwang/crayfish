@@ -8,7 +8,7 @@ use std::process::Command;
 
 extern crate bindgen;
 extern crate cc;
-extern crate parse_mak;
+extern crate gex_sys_build_parse_mak as parse_mak;
 
 pub fn run_command(which: &str, cmd: &mut Command) {
     let msg = format!("Failed to execute {:?}", cmd);

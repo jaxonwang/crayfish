@@ -1,0 +1,10 @@
+[package]
+name = "gex_sys_build_parse_mak"
+version = "0.1.0"
+authors = ["JX Wang <jxwang92@gmail.com>"]
+edition = "2018"
+license = "BSD-3-Clause"
+description = "Parse mak file to build gex-sys"
+repository = "https://github.com/jaxonwang/crayfish"
+
+[dependencies]

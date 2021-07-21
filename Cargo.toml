@@ -2,7 +2,7 @@
 
 members = [
   "gex-sys",
-  "gex-sys/parse_mak",
+  "gex-sys/gex_sys_build_parse_mak",
   "crayfish",
   "crayfish-macros",
   "crayfish-trace-macros",
