@@ -15,9 +15,5 @@ quote = "1.0"
 syn = "1.0.72"
 proc-macro2 = "1.0.26"
 
-[dev-dependencies]
-metrics = "0.16"
-quanta = "0.8"
-
 [features]
 enabled = []
