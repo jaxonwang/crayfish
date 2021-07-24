@@ -3,6 +3,7 @@ name = "crayfish-macros"
 version = "0.1.0"
 authors = ["JX Wang <jxwang92@gmail.com>"]
 edition = "2018"
+license = "BSD-3-Clause"
 description = "Crayfish macros"
 repository = "https://github.com/jaxonwang/crayfish"
 
