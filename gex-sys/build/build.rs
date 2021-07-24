@@ -6,9 +6,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+mod parse_mak;
+
 extern crate bindgen;
 extern crate cc;
-extern crate gex_sys_build_parse_mak as parse_mak;
 
 pub fn run_command(which: &str, cmd: &mut Command) {
     let msg = format!("Failed to execute {:?}", cmd);
@@ -301,7 +302,8 @@ pub fn main() {
     // config contains version info
     println!("cargo:rerun-if-changed=src/gasnet_wrapper.h");
     println!("cargo:rerun-if-changed=src/gasnet_wrapper.c");
-    println!("cargo:rerun-if-changed=gasnet");
+    // NOTE: comment this line since autoconf crate "configure" in the directory
+    // println!("cargo:rerun-if-changed=gasnet");
     for env in REBUILD_IF_ENVS_CHANGE.iter() {
         println!("cargo:rerun-if-env-changed={}", env);
     }

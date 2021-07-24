@@ -3,7 +3,7 @@ name = "gex-sys"
 version = "0.1.0"
 authors = ["JX Wang <jxwang92@gmail.com>"]
 edition = "2018"
-build = "build.rs"
+build = "build/build.rs"
 license = "BSD-3-Clause"
 description = "GASNet-EX bindings for Crayfish"
 repository = "https://github.com/jaxonwang/crayfish"
@@ -14,7 +14,6 @@ repository = "https://github.com/jaxonwang/crayfish"
 bindgen = { version="0.58.1", features=["runtime"], default-features = false}
 cc = "1.0.67"
 pkg-config = "0.3"
-gex_sys_build_parse_mak = {path = "./gex_sys_build_parse_mak", version = "0.1.0"}
 
 [features]
 default = ["udp"]
