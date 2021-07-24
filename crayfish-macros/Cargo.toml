@@ -10,16 +10,7 @@ repository = "https://github.com/jaxonwang/crayfish"
 [lib]
 proc-macro = true
 
-[[test]]
-name = "tests"
-path = "tests/all.rs"
-
 [dependencies]
 quote = "1.0"
 syn = "1.0.72"
 proc-macro2 = "1.0.26"
-
-[dev-dependencies]
-trybuild = "1.0"
-crayfish = { path = "../crayfish", version = "0.0.1"}
-futures = "0.3"

@@ -1,0 +1,15 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2018"
+publish = false
+
+[[test]]
+name = "tests"
+path = "tests/all.rs"
+
+[dev-dependencies]
+trybuild = "1.0"
+crayfish = { path = "../../crayfish", version = "0.0.1"}
+crayfish-macros = { path = "../../crayfish-macros", version = "0.1.0"}
+futures = "0.3"
