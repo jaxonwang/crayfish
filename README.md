@@ -12,8 +12,8 @@ Crayfish brings the APGAS programming model to the Rust programming language. Th
 
 [X10-url]: http://x10-lang.org/
 
-## What is APGAS (Asynchronous Partitioned global address space)?
-APGAS  (Asynchronous Partitioned global address space) is a parallel programming model targeting the productivity of parallel programming. It was first implemented by the programming language X10. More details can be found on [wiki][gpas-url]. When it comes to Crayfish, Rust's async/await now is extended to a remote process by using Crayfish's macro `at`: 
+## What is APGAS?
+APGAS (Asynchronous Partitioned Global Address Space) is a parallel programming model targeting the productivity of parallel programming. It was first implemented by the programming language X10. More details can be found on [wiki][gpas-url]. When it comes to Crayfish, Rust's async/await now is extended to a remote process by using Crayfish's macro `at`: 
 [//]: # (TODO: link to the API doc)
 ```rust
 use crayfish;
