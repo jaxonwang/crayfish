@@ -86,10 +86,10 @@ fn mpi_conduit_flags(ctx: &BuildContext) {
 
 fn ibv_conduit_flags(ctx: &BuildContext) {
     // check mpi spawner enabled or not
-    match ctx.make_vars["GASNET_SPAWNER_MPI"].as_str(){
+    match ctx.make_vars["GASNET_SPAWNER_MPI"].as_str() {
         "1" => mpi_probe::set_mpi_link_flags(ctx),
         "0" => (),
-        _ => panic!("bad GASNET_SPAWNER_MPI")
+        _ => panic!("bad GASNET_SPAWNER_MPI"),
     }
 }
 
@@ -116,9 +116,7 @@ mod mpi_probe {
 
         let mut ld_flags = vec![];
         // some mpicc output -L"/this", we need to remove \"
-        let real_path = |p: &str| {
-            p.trim_matches('\"').to_owned()
-        };
+        let real_path = |p: &str| p.trim_matches('\"').to_owned();
         for dir in &lib.lib_paths {
             ld_flags.push(format!("-L{}", real_path(dir.to_str().unwrap())));
         }
@@ -237,11 +235,12 @@ mod mpi_probe {
 
 struct BuildContext {
     out_dir: PathBuf,
-    working_dir: PathBuf,         // buildpath/out/gasnet
-    gasnet_src_dir: PathBuf,      // .src/gasnet
-    gasnet_lib_dir: PathBuf,      // buildpath/out/lib
-    gasnet_include_dir: PathBuf,  // buildpath/out/include
-    conduit_include_dir: PathBuf, // buildpath/out/include/udp-conduit
+    working_dir: PathBuf,            // buildpath/out/gasnet
+    gasnet_src_dir: PathBuf,         // .src/gasnet
+    gasnet_working_src_dir: PathBuf, // buildpath/out/gasnet-src
+    gasnet_lib_dir: PathBuf,         // buildpath/out/lib
+    gasnet_include_dir: PathBuf,     // buildpath/out/include
+    conduit_include_dir: PathBuf,    // buildpath/out/include/udp-conduit
     conduit: GasnetConduit,
     make_vars: HashMap<String, String>,
 }
@@ -255,6 +254,7 @@ impl BuildContext {
         let conduit_include_dir = gasnet_include_dir.join(format!("{}-conduit", conduit.as_ref()));
         let gasnet_src_dir = fs::canonicalize("gasnet").unwrap();
         let working_dir = out_dir.join("gasnet");
+        let gasnet_working_src_dir = out_dir.join("gasnet-src");
         // create working directory
         if !working_dir.exists() {
             fs::create_dir(&working_dir).unwrap();
@@ -265,6 +265,7 @@ impl BuildContext {
             gasnet_lib_dir,
             gasnet_include_dir,
             gasnet_src_dir,
+            gasnet_working_src_dir,
             conduit_include_dir,
             conduit,
             make_vars: HashMap::new(),
@@ -272,7 +273,7 @@ impl BuildContext {
     }
 
     fn build_script_path(&self, script_name: impl AsRef<Path>) -> PathBuf {
-        self.gasnet_src_dir.join(script_name)
+        self.gasnet_working_src_dir.join(script_name)
     }
 
     fn parse_gasnet_makefile(&mut self) {
@@ -283,6 +284,34 @@ impl BuildContext {
         ));
         self.make_vars = parse_mak::parse_makefile(mk_file.as_path());
     }
+}
+
+/// copy everything in from to "to" dir, does not follow link
+fn copy_tree<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), std::io::Error> {
+    use std::io::Error;
+    use std::io::ErrorKind;
+    if !from.as_ref().is_dir() || !to.as_ref().is_dir() {
+        return Err(Error::new(ErrorKind::NotFound, "invalid dirs"));
+    }
+
+    for maybe_entry in from.as_ref().read_dir()? {
+        let entry = maybe_entry?;
+        let file_type = entry.file_type()?;
+        let file_name = entry.file_name();
+        let src_path = entry.path();
+        let dst_path = to.as_ref().join(file_name);
+        if file_type.is_file() {
+            fs::copy(&src_path, &dst_path)?;
+        } else if file_type.is_dir() {
+            fs::create_dir(&dst_path)?;
+            copy_tree(&src_path, &dst_path)?;
+        } else if file_type.is_symlink() {
+            panic!()
+        } else {
+            unreachable!()
+        }
+    }
+    Ok(())
 }
 
 pub fn main() {
@@ -308,10 +337,13 @@ pub fn main() {
         println!("cargo:rerun-if-env-changed={}", env);
     }
 
+    // copy the src to an tmp src dir since bootstrap would change the src dir
+    fs::create_dir(&ctx.gasnet_working_src_dir).unwrap();
+    copy_tree(&ctx.gasnet_src_dir, &ctx.gasnet_working_src_dir).unwrap();
+
     // bootstrap
     let mut bt = Command::new("/bin/sh");
-    bt.arg(ctx.build_script_path("Bootstrap"))
-        .current_dir(&ctx.working_dir);
+    bt.arg(ctx.build_script_path("Bootstrap"));
     if !ctx.build_script_path("configure").exists() {
         // no re-bootstrap
         if !ctx.build_script_path("Bootstrap").exists() {
@@ -329,7 +361,8 @@ pub fn main() {
         .arg("--disable-par");
     #[cfg(debug_assertions)]
     cfg.arg("--enable-debug");
-    for c in GASNET_CONDUIT_LIST.iter() { // only enable one
+    for c in GASNET_CONDUIT_LIST.iter() {
+        // only enable one
         if &ctx.conduit.as_ref() == c {
             cfg.arg(format!("--enable-{}", c));
         } else {
