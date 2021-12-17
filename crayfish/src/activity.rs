@@ -1204,7 +1204,7 @@ pub mod test {
 
         let mut rng = thread_rng();
         let value: usize = rng.gen();
-        #[allow(non_fmt_panic)]
+        #[allow(non_fmt_panics)]
         let func = |a: usize| panic!(format!("1{}", a));
         panic::set_hook(Box::new(|_| {}));
         let result = panic::catch_unwind(|| {
