@@ -338,6 +338,10 @@ pub fn main() {
     }
 
     // copy the src to an tmp src dir since bootstrap would change the src dir
+    // if dir exist, it could be the one created by the previous build failure, delete it first
+    if ctx.gasnet_working_src_dir.is_dir() {
+        fs::remove_dir_all(&ctx.gasnet_working_src_dir).unwrap();
+    }
     fs::create_dir(&ctx.gasnet_working_src_dir).unwrap();
     copy_tree(&ctx.gasnet_src_dir, &ctx.gasnet_working_src_dir).unwrap();
 
