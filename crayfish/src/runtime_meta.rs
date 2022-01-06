@@ -19,12 +19,12 @@ pub type DispatchFunction = fn(TaskItem) -> BoxFuture<'static, ()>;
 
 #[derive(Clone, Debug)]
 pub struct FunctionMetaData {
-    pub(crate) fn_id: FunctionLabel,
-    pub(crate) fn_ptr: DispatchFunction,
-    pub(crate) fn_name: String,
-    pub(crate) file: String,
-    pub(crate) line: u32,
-    pub(crate) mod_path: String,
+    fn_id: FunctionLabel,
+    fn_ptr: DispatchFunction,
+    fn_name: String,
+    file: String,
+    line: u32,
+    mod_path: String,
 }
 impl FunctionMetaData {
     pub fn new(
@@ -43,6 +43,10 @@ impl FunctionMetaData {
             line,
             mod_path,
         }
+    }
+
+    pub fn call(&self, item: TaskItem) -> BoxFuture<'static, ()> {
+        (self.fn_ptr)(item)
     }
 }
 

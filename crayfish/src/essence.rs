@@ -67,8 +67,8 @@ pub fn send_activity_result<T: RemoteSend>(
 
 fn worker_dispatch(item: TaskItem) -> BoxFuture<'static, ()> {
     let fn_id = item.function_id();
-    let resovled = runtime_meta::get_func_table().get(&fn_id).unwrap().fn_ptr;
-    resovled(item)
+    let resovled = runtime_meta::get_func_table().get(&fn_id).unwrap();
+    resovled.call(item)
 }
 
 // make this public for integration test
