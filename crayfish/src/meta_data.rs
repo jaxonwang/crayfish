@@ -1,5 +1,5 @@
-extern crate num_cpus;
 extern crate once_cell;
+extern crate sys_info;
 use crate::logging::*;
 use once_cell::sync::Lazy;
 use std::env;
@@ -19,6 +19,14 @@ pub fn env_with_prefix(name: &str) -> Result<String, env::VarError> {
     env::var(&name)
 }
 
+pub static HOSTNAME: Lazy<String> = Lazy::new(|| match sys_info::hostname() {
+    Ok(hostname) => hostname,
+    Err(e) => {
+        warn!("Get host name error:{}", e);
+        String::from("Unknown")
+    }
+});
+
 pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
     #[cfg(not(test))]
     let default_num = 1;
@@ -36,7 +44,10 @@ pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
                 }
             };
             if !(0 < n && n <= default_num) {
-                warn!("worker number must be in range 1~{}, given: {}", default_num, n);
+                warn!(
+                    "worker number must be in range 1~{}, given: {}",
+                    default_num, n
+                );
                 warn_dft();
                 default_num
             } else {

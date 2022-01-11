@@ -36,12 +36,13 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "{date} {file}:{line} {pid}:{tid:?} {level} {message}",
+                "{date} {file}:{line} {pid}:{tid:?}@{hostname} {level} {message}",
                 date = chrono::Local::now().format("%H:%M:%S.%6f"),
                 file = record.file().unwrap_or("unknown"),
                 line = record.line().unwrap_or(0),
                 pid = GLOBAL_ID.load(Ordering::Relaxed),
                 tid = thread::current().id(),
+                hostname = *meta_data::HOSTNAME,
                 level = colors.color(record.level()),
                 message = message
             ))
