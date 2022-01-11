@@ -1,16 +1,17 @@
-use crate::activity::FunctionLabel;
-use crate::activity::TaskItem;
-use crate::activity::SquashTypeHelper;
-use crate::activity::HelperMap;
-use crate::activity::HelperByType;
-use crate::args::RemoteSend;
 use crate::activity::set_helpers;
+use crate::activity::FunctionLabel;
+use crate::activity::HelperByType;
+use crate::activity::HelperMap;
+use crate::activity::SquashTypeHelper;
+use crate::activity::TaskItem;
+use crate::logging;
+use crate::args::RemoteSend;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
+use std::any::TypeId;
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::any::TypeId;
 
 extern crate futures;
 pub extern crate inventory;
@@ -57,14 +58,38 @@ static STATIC_FUNC_META_TABLE: Lazy<Mutex<FuncMetaTable>> =
     Lazy::new(|| Mutex::new(FuncMetaTable::default()));
 
 pub(crate) fn init_func_table() {
+    let fn_info_header: Vec<String> = vec!["Id", "Address", "Name", "File", "Line", "Module"]
+        .iter()
+        .map(|&s| s.to_owned())
+        .collect();
+    let mut fn_info_body = vec![];
+
     let mut m = STATIC_FUNC_META_TABLE.lock().unwrap();
     for func_data in inventory::iter::<FunctionMetaData> {
+        // fn info to print
+        fn_info_body.push(vec![
+            func_data.fn_id.to_string(),
+            format!("{:p}", func_data.fn_ptr),
+            func_data.fn_name.clone(),
+            func_data.file.clone(),
+            func_data.line.to_string(),
+            func_data.mod_path.clone(),
+        ]);
+
         let exist = m.insert(func_data.fn_id, func_data.clone());
         if let Some(origin) = exist {
-            panic!("Found function id conflict!
-            The hash of following function metadata are the same: {:?} {:?}", *func_data, origin)
+            panic!(
+                "Found function id conflict!
+            The hash of following function metadata are the same: {:?} {:?}",
+                *func_data, origin
+            )
         }
     }
+
+    logging::debug!(
+        "Async functions:\n{}",
+        logging::pretty_table_formatter(fn_info_header, fn_info_body)
+    );
 }
 
 pub(crate) fn get_func_table() -> &'static FuncMetaTable {
@@ -84,23 +109,23 @@ pub(crate) fn get_func_table() -> &'static FuncMetaTable {
 }
 
 #[derive(Clone)]
-pub struct SquashHelperMeta{
+pub struct SquashHelperMeta {
     type_id: TypeId,
     helper: Box<dyn SquashTypeHelper + Send>,
 }
 
-impl SquashHelperMeta{
-    pub fn new<T:RemoteSend>() -> Self {
-        SquashHelperMeta{
+impl SquashHelperMeta {
+    pub fn new<T: RemoteSend>() -> Self {
+        SquashHelperMeta {
             type_id: TypeId::of::<T>(),
-            helper: Box::new(HelperByType::<T>::default())
+            helper: Box::new(HelperByType::<T>::default()),
         }
     }
 }
 
 inventory::collect!(SquashHelperMeta);
 
-pub(crate) fn init_helpers(){
+pub(crate) fn init_helpers() {
     let mut helpers = HelperMap::default();
     for h in inventory::iter::<SquashHelperMeta> {
         helpers.insert(h.type_id, h.helper.clone());
