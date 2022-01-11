@@ -43,14 +43,25 @@ pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
                     default_num
                 }
             };
-            if !(0 < n && n <= default_num) {
-                warn!(
-                    "worker number must be in range 1~{}, given: {}",
-                    default_num, n
-                );
+            if 0 >= n {
+                warn!( "worker number must be in valid, given: {}", n);
                 warn_dft();
                 default_num
             } else {
+                // system logic cpu number check
+                match sys_info::cpu_num() {
+                    Ok(sys_cpu_num) => {
+                        if n > sys_cpu_num as usize{
+                            warn!(
+                                "given cpu num {} but system cpu number: {}",
+                                n, sys_cpu_num
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("failed to get system cpu number: {}", e);
+                    }
+                };
                 n
             }
         }
