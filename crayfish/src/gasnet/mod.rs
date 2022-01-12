@@ -457,6 +457,7 @@ impl FragmentBuffer {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct EndpointData {
     segment_addr: *mut c_void,
