@@ -44,18 +44,15 @@ pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
                 }
             };
             if 0 >= n {
-                warn!( "worker number must be in valid, given: {}", n);
+                warn!("worker number must be in valid, given: {}", n);
                 warn_dft();
                 default_num
             } else {
                 // system logic cpu number check
                 match sys_info::cpu_num() {
                     Ok(sys_cpu_num) => {
-                        if n > sys_cpu_num as usize{
-                            warn!(
-                                "given cpu num {} but system cpu number: {}",
-                                n, sys_cpu_num
-                            );
+                        if n > sys_cpu_num as usize {
+                            warn!("given cpu num {} but system cpu number: {}", n, sys_cpu_num);
                         }
                     }
                     Err(e) => {
@@ -102,9 +99,10 @@ pub static MAX_BUFFER_LIFETIME: Lazy<time::Duration> = Lazy::new(|| {
 });
 
 pub fn show_data() {
-    let show = vec![
-        format!("NUM_CPUS: {}", *NUM_CPUS),
-        format!("MAX_SEND_INTERVAL: {:?}", *MAX_BUFFER_LIFETIME),
+    let show_table_header = s_vec!["Variable", "Name"];
+    let show_table_body = vec![
+        vec!["NUM_CPUS".to_owned(), NUM_CPUS.to_string()],
+        vec!["MAX_SEND_INTERVAL".to_owned(), format!("{:?}", *MAX_BUFFER_LIFETIME)],
     ];
-    debug!("run Crayfish with:\n{}", show.join("\n"));
+    debug!("run Crayfish with:\n{}", pretty_table_formatter(show_table_header, show_table_body));
 }

@@ -105,14 +105,16 @@ pub fn pretty_table_formatter(header: Vec<String>, body: Vec<Vec<String>>) -> St
     final_table.push('\n');
 
     // body
-    for (i, row) in body.iter().enumerate() {
+    for row in body.iter() {
         for (j, content) in row.iter().enumerate() {
             push_one_cell(&mut final_table, content, j);
         }
-        if i != body.len() - 1 {
-            final_table.push('\n');
-        }
+        final_table.push('\n');
     }
+
+    // another bar
+    final_table.push_str(&bar);
+
     final_table
 }
 
@@ -141,7 +143,8 @@ header1    h1      hhhhhheader1    header
 1          1111    111             1     
 22222      1111    111             2     
 1          11      111             2     
-123        1111    111             2     ";
+123        1111    111             2     
+-----------------------------------------";
         assert_eq!(expected, pretty_table_formatter(header, body));
     }
 }

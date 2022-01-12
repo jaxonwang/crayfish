@@ -4,8 +4,8 @@ use crate::activity::HelperByType;
 use crate::activity::HelperMap;
 use crate::activity::SquashTypeHelper;
 use crate::activity::TaskItem;
-use crate::logging;
 use crate::args::RemoteSend;
+use crate::logging;
 use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
@@ -58,10 +58,8 @@ static STATIC_FUNC_META_TABLE: Lazy<Mutex<FuncMetaTable>> =
     Lazy::new(|| Mutex::new(FuncMetaTable::default()));
 
 pub(crate) fn init_func_table() {
-    let fn_info_header: Vec<String> = vec!["Id", "Address", "Name", "File", "Line", "Module"]
-        .iter()
-        .map(|&s| s.to_owned())
-        .collect();
+    let fn_info_header: Vec<String> =
+        s_vec!["Id", "Address", "Name", "File", "Line", "Module"];
     let mut fn_info_body = vec![];
 
     let mut m = STATIC_FUNC_META_TABLE.lock().unwrap();
