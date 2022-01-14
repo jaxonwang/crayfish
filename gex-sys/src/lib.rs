@@ -36,8 +36,7 @@ fn literal_to_pointer(literal: &'static [u8]) -> *const c_char {
 
 pub fn gex_client_init() -> (Vec<String>, gex_Client_t, gex_EP_t, gex_TM_t) {
     let args = args()
-        .map(|arg| CString::new(arg).unwrap())
-        .collect::<Vec<CString>>();
+        .map(|arg| CString::new(arg).unwrap());
     let mut c_args = args
         .into_iter()
         .map(|arg| arg.into_raw())

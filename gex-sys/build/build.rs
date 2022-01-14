@@ -121,7 +121,7 @@ mod mpi_probe {
             ld_flags.push(format!("-L{}", real_path(dir.to_str().unwrap())));
         }
         for lib in &lib.libs {
-            ld_flags.push(format!("-l{}", real_path(&lib)));
+            ld_flags.push(format!("-l{}", real_path(lib)));
         }
         println!("cargo:rustc-flags={}", ld_flags.join(" "));
     }
@@ -138,7 +138,6 @@ mod mpi_probe {
             pub include_paths: Vec<PathBuf>,
             /// The version of the MPI library
             pub version: String,
-            _priv: (),
         }
 
         use super::*;
@@ -153,7 +152,6 @@ mod mpi_probe {
                     lib_paths: lib.link_paths,
                     include_paths: lib.include_paths,
                     version: lib.version,
-                    _priv: (),
                 }
             }
         }
@@ -182,7 +180,6 @@ mod mpi_probe {
                     lib_paths: libdirs,
                     include_paths: headerdirs,
                     version: String::from("unknown"),
-                    _priv: (),
                 }
             })
         }

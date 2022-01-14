@@ -144,9 +144,8 @@ impl HelperFunctionsGenerator {
         };
 
         // first param is impl Context
-        let params: Vec<_> = inputs.clone().into_iter().collect();
+        let params = inputs.clone().into_iter();
         let params: Vec<(String, Type)> = params
-            .into_iter()
             .enumerate()
             .map(|(i, p)| match p {
                 syn::FnArg::Typed(pt) => (format!("__crayfish_arg{}", i), *pt.ty),

@@ -16,11 +16,11 @@ enum Token<'a> {
 }
 
 impl<'a> Makefile<'a> {
-    pub fn from_lines(mut lines: impl Iterator<Item = &'a str>) -> Self {
+    pub fn from_lines(lines: impl Iterator<Item = &'a str>) -> Self {
         let mut mk = Makefile::<'a>::default();
 
         let mut record: Vec<_> = vec![];
-        while let Some(line) = lines.next() {
+        for line in lines {
             if Self::is_comment(line) || line.trim().is_empty() {
                 continue;
             }
@@ -124,9 +124,7 @@ impl<'a> Makefile<'a> {
 
     pub fn visit(&self, variable_name: &str) -> Option<String> {
         let tokens = self.dict.get(&variable_name);
-        if tokens.is_none() {
-            return None;
-        }
+        tokens?;
         let ret = tokens
             .unwrap()
             .iter()
@@ -163,7 +161,7 @@ pub fn parse_makefile(makefile: &Path) -> HashMap<String, String>
 
     let mut vars = HashMap::new();
     for k in mk.dict.keys(){
-        vars.insert(k.to_string(), mk.visit(k).unwrap_or(String::default()));
+        vars.insert(k.to_string(), mk.visit(k).unwrap_or_default());
     }
     vars
 }

@@ -1,8 +1,8 @@
+use crate::args::RemoteSend;
 pub use crate::global_id::ActivityId;
 use crate::place::Place;
 use crate::serialization::deserialize_from;
 use crate::serialization::serialize_into;
-use crate::args::RemoteSend;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use serde::de::MapAccess;
@@ -51,7 +51,6 @@ pub fn copy_panic_payload(
         Box::new(String::from("Unsupport payload type"))
     }
 }
-
 
 pub(crate) trait SquashableObject: Any + Send + 'static {
     // for downcast
@@ -197,16 +196,9 @@ type SquashedMapValue = (SBox, Vec<OrderLabel>);
 type SquashedMap = FxHashMap<TypeId, SquashedMapValue>;
 
 // to allow implement serialization for squashedmap
+#[derive(Default)]
 struct SquashedMapWrapper {
     m: SquashedMap,
-}
-
-impl Default for SquashedMapWrapper {
-    fn default() -> Self {
-        SquashedMapWrapper {
-            m: FxHashMap::default(),
-        }
-    }
 }
 
 impl Deref for SquashedMapWrapper {
@@ -424,7 +416,7 @@ pub trait StaticSquashBufferFactory {
     fn deserialize_from(bytes: &[u8]) -> Box<dyn AbstractSquashBuffer>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct SquashBuffer {
     // TODO boxex
     items: Vec<StrippedTaskItem>,
@@ -433,17 +425,6 @@ struct SquashBuffer {
     squashed_map: SquashedMapWrapper, // type id of squashed, ditto
     #[serde(skip)]
     ordered_squashable: OrderedSquashable, // still preserve label, for I don't want extra squash item struct
-}
-
-impl Default for SquashBuffer {
-    fn default() -> Self {
-        SquashBuffer {
-            items: vec![],
-            squashable_map: SquashableMap::default(),
-            squashed_map: SquashedMapWrapper::default(),
-            ordered_squashable: OrderedSquashable::default(),
-        }
-    }
 }
 
 impl SquashBuffer {
@@ -584,15 +565,15 @@ pub struct StrippedTaskItem {
     args: Vec<u8>,
 }
 
-impl fmt::Debug for StrippedTaskItem{
+impl fmt::Debug for StrippedTaskItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Stripped")
-         .field("fn_id", &self.fn_id)
-         .field("place", &self.place)
-         .field("activity_id", &self.activity_id)
-         .field("ret", &self.ret)
-         .field("waited", &self.waited)
-         .finish()
+            .field("fn_id", &self.fn_id)
+            .field("place", &self.place)
+            .field("activity_id", &self.activity_id)
+            .field("ret", &self.ret)
+            .field("waited", &self.waited)
+            .finish()
     }
 }
 
@@ -602,12 +583,12 @@ pub struct TaskItem {
     squashable: Vec<(SoBox, OrderLabel)>,
 }
 
-impl fmt::Debug for TaskItem{
+impl fmt::Debug for TaskItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TaskItem")
-         .field("inner", &self.inner)
-         .field("squashable_len", &self.squashable.len())
-         .finish()
+            .field("inner", &self.inner)
+            .field("squashable_len", &self.squashable.len())
+            .finish()
     }
 }
 impl TaskItem {
@@ -623,7 +604,7 @@ impl TaskItem {
     pub fn is_waited(&self) -> bool {
         self.inner.waited
     }
-    pub fn function_id(&self) -> FunctionLabel{
+    pub fn function_id(&self) -> FunctionLabel {
         self.inner.fn_id
     }
 }
@@ -641,7 +622,7 @@ impl TaskItemExtracter {
     pub fn arg<T: RemoteSend>(&mut self) -> T {
         if T::is_squashable() {
             *downcast_squashable::<T>(self.item.squashable.pop().unwrap().0).unwrap()
-        }else{
+        } else {
             let mut read = &self.item.inner.args[self.position..];
             let t = deserialize_from(&mut read).expect("Failed to deserialize function argument");
             self.position =
@@ -663,10 +644,7 @@ impl TaskItemExtracter {
     }
     /// should be called before ret_xxx
     pub fn sub_activities(&mut self) -> Vec<ActivityId> {
-        std::mem::replace(
-            &mut self.item.inner.ret.as_mut().unwrap().sub_activities,
-            vec![],
-        )
+        std::mem::take(&mut self.item.inner.ret.as_mut().unwrap().sub_activities)
     }
     pub fn fn_id(&self) -> FunctionLabel {
         self.item.inner.fn_id
@@ -707,11 +685,11 @@ impl TaskItemBuilder {
         self.item.inner.waited = true;
     }
 
-    pub fn arg<T:RemoteSend>(&mut self, t: T) {
-        if T::is_squashable(){
+    pub fn arg<T: RemoteSend>(&mut self, t: T) {
+        if T::is_squashable() {
             let label = self.next_label();
             self.item.squashable.push((Box::new(t), label));
-        }else{
+        } else {
             serialize_into(&mut self.item.inner.args, &t)
                 .expect("Failed to serialize function argument");
             self.next_label();
@@ -730,7 +708,7 @@ impl TaskItemBuilder {
             sub_activities: vec![],
         });
     }
-    pub fn ret<T:RemoteSend>(&mut self, result: std::thread::Result<T>) {
+    pub fn ret<T: RemoteSend>(&mut self, result: std::thread::Result<T>) {
         let result = match result {
             Ok(ret) => {
                 self.arg::<T>(ret);
@@ -802,9 +780,9 @@ pub mod test {
     use super::*;
     use rand::prelude::*;
     use rand::seq::SliceRandom;
+    use std::cmp::Ordering;
     use std::convert::TryInto;
     use std::sync::MutexGuard;
-    use std::cmp::Ordering;
 
     fn clone_squashable_orderlabel_list<T: RemoteSend + Clone>(
         v: &[(SoBox, OrderLabel)],
@@ -916,7 +894,7 @@ pub mod test {
                 A { value: ret }
             })
         }
-        fn reorder(&self, other: &Self) -> Ordering{
+        fn reorder(&self, other: &Self) -> Ordering {
             self.cmp(other)
         }
     }
@@ -937,7 +915,7 @@ pub mod test {
         fn extract(out: &mut Self::Output) -> Option<Self> {
             out.list.pop().map(|value| B { value })
         }
-        fn reorder(&self, other: &Self) -> Ordering{
+        fn reorder(&self, other: &Self) -> Ordering {
             self.cmp(other)
         }
     }

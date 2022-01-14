@@ -35,8 +35,8 @@ const COLL_ERR_MSG_FINISH: &str = "collective operation is not allowed in any fi
 
 pub struct FinishCounterGuard {}
 
-impl FinishCounterGuard {
-    pub fn new() -> Self {
+impl Default for FinishCounterGuard {
+    fn default() -> Self {
         FINISH_COUNTER.with(|c| c.set(c.get() + 1));
         FinishCounterGuard {}
     }
@@ -195,7 +195,7 @@ mod test {
     #[test]
     pub fn test_with_counter() {
         let _t = TestGuardForStatic::new();
-        FinishCounterGuard::new();
+        FinishCounterGuard::default();
         do_coll();
     }
 
@@ -203,7 +203,7 @@ mod test {
     #[should_panic]
     pub fn test_with_counter_panic() {
         let _t = TestGuardForStatic::new();
-        let _fg = FinishCounterGuard::new();
+        let _fg = FinishCounterGuard::default();
         do_coll()
     }
 }
