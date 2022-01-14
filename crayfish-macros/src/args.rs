@@ -1,10 +1,10 @@
-use proc_macro2::TokenStream;
-use quote::quote;
-use syn::GenericParam;
-use syn::Item;
-use syn::AttributeArgs;
 use crate::attr::Attributes;
 use crate::utils::err;
+use proc_macro2::TokenStream;
+use quote::quote;
+use syn::AttributeArgs;
+use syn::GenericParam;
+use syn::Item;
 
 pub(crate) enum RSendImpl {
     Squashed,
@@ -12,7 +12,11 @@ pub(crate) enum RSendImpl {
     DefaultImpl,
 }
 
-pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: Item) -> syn::Result<TokenStream> {
+pub(crate) fn impl_remote_send(
+    arg_type: RSendImpl,
+    args: AttributeArgs,
+    item: Item,
+) -> syn::Result<TokenStream> {
     let attrs = Attributes::new(args)?;
     let crayfish_path: TokenStream = attrs.get_path();
     let remote_send_trait: TokenStream = quote!(#crayfish_path::args::RemoteSend);
@@ -44,9 +48,7 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
             } = s;
             (ident, generics)
         }
-        thing => {
-            return err(thing, "attributes only applys to struct, enum.")
-        }
+        thing => return err(thing, "attributes only applys to struct, enum."),
     };
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -68,7 +70,7 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
             // remove the last comma in where clause
             let predicates = w.predicates.iter();
             Some(quote!(where #(#predicates),* , #(#ty_generices_with_bound), *))
-        },
+        }
         None => {
             if ty_generices_with_bound.is_empty() {
                 None
@@ -105,24 +107,24 @@ pub(crate) fn impl_remote_send(arg_type: RSendImpl, args: AttributeArgs, item: I
     };
 
     // register for suqashable
-    match arg_type {
-        RSendImpl::Squashable => {
-            if !generics.params.is_empty() {
-                return err(&generics,"current version doesn't support generics for squashable type." )
-            }
-            return Ok(quote! {
-                #out_item
-                #[doc(hidden)]
-                #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
-                const _: () = {
-                    use #crayfish_path::inventory as inventory;
-                    inventory::submit! {
-                        #crayfish_path::runtime_meta::SquashHelperMeta::new::<#name>()
-                    };
-                };
-            });
+    if let RSendImpl::Squashable = arg_type {
+        if !generics.params.is_empty() {
+            return err(
+                &generics,
+                "current version doesn't support generics for squashable type.",
+            );
         }
-        _ => (),
+        return Ok(quote! {
+            #out_item
+            #[doc(hidden)]
+            #[allow(non_upper_case_globals, unused_attributes, unused_qualifications)]
+            const _: () = {
+                use #crayfish_path::inventory as inventory;
+                inventory::submit! {
+                    #crayfish_path::runtime_meta::SquashHelperMeta::new::<#name>()
+                };
+            };
+        });
     }
 
     Ok(quote! {

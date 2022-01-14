@@ -10,7 +10,7 @@ pub const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 fn env_name_with_prefix(name: &str) -> String {
     let mut pkg_name_upper = String::from(PKG_NAME);
     pkg_name_upper.make_ascii_uppercase();
-    let pkg_name_upper = pkg_name_upper.replace("-", "_");
+    let pkg_name_upper = pkg_name_upper.replace('-', "_");
     format!("{}_{}", pkg_name_upper, name)
 }
 
@@ -43,24 +43,18 @@ pub static NUM_CPUS: Lazy<usize> = Lazy::new(|| {
                     default_num
                 }
             };
-            if 0 >= n {
-                warn!("worker number must be in valid, given: {}", n);
-                warn_dft();
-                default_num
-            } else {
-                // system logic cpu number check
-                match sys_info::cpu_num() {
-                    Ok(sys_cpu_num) => {
-                        if n > sys_cpu_num as usize {
-                            warn!("given cpu num {} but system cpu number: {}", n, sys_cpu_num);
-                        }
+            // system logic cpu number check
+            match sys_info::cpu_num() {
+                Ok(sys_cpu_num) => {
+                    if n > sys_cpu_num as usize {
+                        warn!("given cpu num {} but system cpu number: {}", n, sys_cpu_num);
                     }
-                    Err(e) => {
-                        warn!("failed to get system cpu number: {}", e);
-                    }
-                };
-                n
-            }
+                }
+                Err(e) => {
+                    warn!("failed to get system cpu number: {}", e);
+                }
+            };
+            n
         }
         Err(_) => default_num,
     }
@@ -102,7 +96,13 @@ pub fn show_data() {
     let show_table_header = s_vec!["Variable", "Name"];
     let show_table_body = vec![
         vec!["NUM_CPUS".to_owned(), NUM_CPUS.to_string()],
-        vec!["MAX_SEND_INTERVAL".to_owned(), format!("{:?}", *MAX_BUFFER_LIFETIME)],
+        vec![
+            "MAX_SEND_INTERVAL".to_owned(),
+            format!("{:?}", *MAX_BUFFER_LIFETIME),
+        ],
     ];
-    debug!("run Crayfish with:\n{}", pretty_table_formatter(show_table_header, show_table_body));
+    debug!(
+        "run Crayfish with:\n{}",
+        pretty_table_formatter(show_table_header, show_table_body)
+    );
 }

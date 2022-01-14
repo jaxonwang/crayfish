@@ -443,7 +443,7 @@ impl FragmentBuffer {
             data.len(),
             &self.buffer[..10]
         );
-        debug_assert_eq!(self.received_map[offset / self.fragment_size], false);
+        debug_assert!(!self.received_map[offset / self.fragment_size]);
         self.received_map.set(offset / self.fragment_size, true);
         while self.contigunous_end < self.received_map.len()
             && self.received_map[self.contigunous_end]

@@ -140,7 +140,7 @@ impl HelperFunctionsGenerator {
             .unwrap();
         let ret_type: TokenStream = match &attrs.ret_type {
             Some(t) => quote!(#t),
-            None => Self::infer_ret(&function)?,
+            None => Self::infer_ret(function)?,
         };
 
         // first param is impl Context
@@ -497,8 +497,7 @@ pub fn expand_at(input: proc_macro::TokenStream, spawn: SpawnMethod) -> Result<T
                 if !attrs.is_empty() {
                     err(&attrs[0], "Crayfish doesn't suport attribute(s) here")?;
                 }
-                let func_name;
-                match *func {
+                let func_name = match *func {
                     Expr::Path(p) => {
                         let mut p = p;
                         let mut last = p.path.segments.pop().unwrap().into_value();
@@ -513,7 +512,7 @@ pub fn expand_at(input: proc_macro::TokenStream, spawn: SpawnMethod) -> Result<T
                         .to_string();
                         last.ident = syn::Ident::new(last_ident_str.as_str(), last.ident.span());
                         p.path.segments.push(last);
-                        func_name = p
+                        p
                     }
                     thing => return err(thing, "must be a proper function name"),
                 };

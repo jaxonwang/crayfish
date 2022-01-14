@@ -76,7 +76,7 @@ pub fn broadcast_copy<T: Copy + 'static + Send>(
     .map(|a| a.unwrap())
 }
 
-pub fn broadcast<'a, T: RemoteSend>(root: Place, value: &'a mut T) -> BoxFuture<'a, ()> {
+pub fn broadcast<T: RemoteSend>(root: Place, value: &mut T) -> BoxFuture<()> {
     // broadcast size first. Then perform value broadcast
     let mut bytes: Vec<u8> = vec![];
     let mut serialized_len = 0;
