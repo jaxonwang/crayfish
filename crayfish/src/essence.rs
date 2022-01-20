@@ -7,8 +7,6 @@ use crate::activity::TaskItemBuilder;
 use crate::args::RemoteSend;
 use crate::collective;
 use crate::executor;
-use crate::global_id::ActivityIdMethods;
-use crate::global_id::FinishIdMethods;
 use crate::logging;
 use crate::logging::*;
 use crate::meta_data;

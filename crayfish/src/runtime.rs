@@ -10,7 +10,6 @@ use crate::finish::CallingTree;
 use crate::finish::FinishId;
 use crate::global_id;
 use crate::global_id::ActivityIdLower;
-use crate::global_id::ActivityIdMethods;
 use crate::logging::*;
 use crate::meta_data;
 use crate::network::MessageSender;
@@ -447,7 +446,7 @@ where
         tree: CallingTree,
         sender: oneshot::Sender<Box<TaskItem>>,
     ) {
-        let mut b = TaskItemBuilder::new(0, 0, 0);
+        let mut b = TaskItemBuilder::new(0, 0, ActivityId::zero());
         match tree.panic_backtrace() {
             None => b.ret(Ok(())), // build an empty ret
             Some(panic_payload) => b.ret(std::thread::Result::<()>::Err(
@@ -873,7 +872,7 @@ mod test {
     fn test_local_worker_task_queue() {
         let _e = ExecutorHubSetUp::new_with_fake();
         let mut worker_receiver = take_worker_task_receiver();
-        let mut builder = TaskItemBuilder::new(1, place::here(), 3);
+        let mut builder = TaskItemBuilder::new(1, place::here(), ActivityId::from(3));
         builder.arg(1usize);
         builder.arg(0.5f64);
         builder.arg(A { value: 123 });
@@ -882,7 +881,7 @@ mod test {
         let mut e = TaskItemExtracter::new(*item);
         assert_eq!(e.fn_id(), 1);
         assert_eq!(e.place(), place::here());
-        assert_eq!(e.activity_id(), 3);
+        assert_eq!(e.activity_id(), ActivityId::from(3));
         assert_eq!(e.arg::<usize>(), 1);
         assert_eq!(e.arg::<f64>(), 0.5);
         assert_eq!(e.arg::<A>(), A { value: 123 });
@@ -932,7 +931,7 @@ mod test {
         // prepare task a
         let mut a_task = vec![];
         for i in 0..100usize {
-            let mut b = TaskItemBuilder::new(i as FunctionLabel, 9, i as ActivityId);
+            let mut b = TaskItemBuilder::new(i as FunctionLabel, 9, ActivityId::from(i));
             b.arg(i);
             b.arg(A { value: i });
             a_task.push(b.build_box());

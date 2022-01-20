@@ -849,11 +849,13 @@ pub mod test {
                 inner: StrippedTaskItem {
                     fn_id: rng.gen(),
                     place: rng.gen(),
-                    activity_id: rng.gen(),
+                    activity_id: ActivityId::from(rng.gen::<usize>()),
                     waited: false,
                     ret: Some(ReturnInfo {
                         result: Err(s),
-                        sub_activities: (0..8).map(|_| rng.gen()).collect(),
+                        sub_activities: (0..8)
+                            .map(|_| ActivityId::from(rng.gen::<usize>()))
+                            .collect(),
                     }),
                     args: (0..64).map(|_| rng.gen()).collect(),
                 },
@@ -1001,7 +1003,8 @@ pub mod test {
 
     fn crate_squash_item(a: A, b: B, fn_id: FunctionLabel) -> TaskItem {
         let mut rng = thread_rng();
-        let mut builder = TaskItemBuilder::new(fn_id, rng.gen(), rng.gen());
+        let mut builder =
+            TaskItemBuilder::new(fn_id, rng.gen(), ActivityId::from(rng.gen::<usize>()));
         builder.arg(a.clone());
         builder.arg(b.clone());
         builder.arg(a);
@@ -1107,7 +1110,7 @@ pub mod test {
         let mut rng = thread_rng();
         let fn_id: FunctionLabel = 567; // feed by macro
         let place: Place = 444;
-        let activity_id: ActivityId = 123; //
+        let activity_id = ActivityId::from(123); //
         let a = 333i32;
         let b = A { value: 12355 };
         let c = 444i32;
@@ -1132,7 +1135,9 @@ pub mod test {
         assert_eq!(ex.place(), place);
         assert_eq!(ex.activity_id(), activity_id);
 
-        let activities: Vec<ActivityId> = (0..8).map(|_| rng.gen()).collect();
+        let activities: Vec<ActivityId> = (0..8)
+            .map(|_| ActivityId::from(rng.gen::<usize>()))
+            .collect();
         // ret ok
         let result = Ok(1234usize);
         let mut builder = TaskItemBuilder::new(fn_id, place, activity_id);
