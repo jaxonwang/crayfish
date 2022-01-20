@@ -3,55 +3,159 @@ use crate::place::Place;
 use once_cell::sync::Lazy;
 use std::cell::Cell;
 use std::sync::Mutex;
+use serde::Serialize;
+use serde::Deserialize;
 
 extern crate once_cell;
 
 pub type WorkerId = u16;
-pub type FinishId = u64;
-pub type ActivityId = u128;
-pub type ActivityIdLower = u64;
-type FinishLocalId = u32;
-type ActivityLocalId = u32;
+// pub type FinishId = u64;
+// pub type ActivityId = u128;
+// pub type ActivityIdLower = u64;
+type LocalId = u32;
 
-pub trait FinishIdMethods {
-    fn get_place(&self) -> Place;
+/// composedID = PlaceId + WorkerId + LocalId
+pub trait ComposedId {
+    fn place(&self) -> Place;
+    fn worker_id(&self) -> WorkerId;
+    fn local_id(&self) -> LocalId;
 }
 
-impl FinishIdMethods for FinishId {
-    fn get_place(&self) -> Place {
-        (*self >> (16 + 32)) as Place
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct FinishId {
+    place: Place,
+    worker_id: WorkerId,
+    local_id: LocalId,
+}
+
+impl FinishId {
+    pub fn get_place(&self) -> Place {
+        self.place
     }
 }
 
-pub trait ActivityIdMethods {
-    fn get_spawned_place(&self) -> Place;
-    fn get_finish_id(&self) -> FinishId;
-    fn update_finish_id(&self, fid: FinishId) -> ActivityId;
-    fn get_lower(&self) -> ActivityIdLower;
+impl FinishId {
+    fn new(place: Place, worker_id: WorkerId, local_id: LocalId) -> Self {
+        FinishId {
+            place,
+            worker_id,
+            local_id,
+        }
+    }
 }
 
-impl ActivityIdMethods for ActivityId {
-    fn get_spawned_place(&self) -> Place {
-        (*self >> (32 + 16) & ((1 << 16) - 1)) as Place
-    }
-    fn get_finish_id(&self) -> FinishId {
-        (*self >> 64) as FinishId
-    }
-    fn update_finish_id(&self, fid: FinishId) -> ActivityId {
-        (fid as ActivityId) << 64 | (self & ((1 << 64) - 1))
-    }
-    fn get_lower(&self) -> ActivityIdLower {
-        (*self & ((1 << 64) - 1)) as ActivityIdLower
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct ActivityIdLower {
+    place: Place,
+    worker_id: WorkerId,
+    local_id: LocalId,
+}
+
+impl ActivityIdLower {
+    fn new(place: Place, worker_id: WorkerId, local_id: LocalId) -> Self {
+        ActivityIdLower {
+            place,
+            worker_id,
+            local_id,
+        }
     }
 }
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct ActivityId {
+    finish_id: FinishId,
+    lower: ActivityIdLower,
+}
+
+impl std::fmt::Display for ActivityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}{:?}", self.finish_id, self.lower)
+    }
+}
+
+impl Default for ActivityId{
+    fn default() -> Self{
+        ActivityId::zero()
+    }
+}
+
+impl ActivityId {
+    /// zero value used as calling tree root
+    pub fn zero() -> Self {
+        ActivityId {
+            finish_id: FinishId::new(0, 0, 0),
+            lower: ActivityIdLower::new(0, 0, 0),
+        }
+    }
+    pub fn get_spawned_place(&self) -> Place {
+        self.lower.place
+    }
+    pub fn get_finish_id(&self) -> FinishId {
+        self.finish_id
+    }
+    pub fn update_finish_id(&mut self, fid: FinishId) {
+        self.finish_id = fid;
+    }
+    pub fn get_lower(&self) -> ActivityIdLower {
+        self.lower
+    }
+}
+
+// #[repr(C)]
+// union ActivityIdUnion {
+//     activity_id: ActivityId,
+//     bytes: [u8; std::mem::size_of::<ActivityId>()],
+// }
+
+// use serde::Serialize;
+// use serde::Serializer;
+// use serde::ser::SerializeSeq;
+// use serde::Deserialize;
+// use serde::Deserializer;
+//
+// impl Serialize for ActivityId {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         let bytes = unsafe { ActivityIdUnion { activity_id: *self }.bytes };
+//         let mut seq = serializer.serialize_seq(Some(bytes.len()))?;
+//         for element in bytes.iter() {
+//             seq.serialize_element(element)?;
+//         }
+//         seq.end()
+//     }
+// }
+// impl<'de> Deserialize<'de> for SquashedMapWrapper {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//     }
+// }
+
+// impl ActivityIdMethods for ActivityId {
+//     fn get_spawned_place(&self) -> Place {
+//         (*self >> (32 + 16) & ((1 << 16) - 1)) as Place
+//     }
+//     fn get_finish_id(&self) -> FinishId {
+//         (*self >> 64) as FinishId
+//     }
+//     fn update_finish_id(&self, fid: FinishId) -> ActivityId {
+//         (fid as ActivityId) << 64 | (self & ((1 << 64) - 1))
+//     }
+//     fn get_lower(&self) -> ActivityIdLower {
+//         (*self & ((1 << 64) - 1)) as ActivityIdLower
+//     }
+// }
 
 // two level mutex here, but I think the code is clear
 static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(|| Mutex::new(0));
 
 thread_local! {
     static WORKER_ID: Cell<Option<WorkerId>> = Cell::new(None);
-    static NEXT_FINISH_LOCAL_ID: Cell<FinishLocalId> = Cell::new(0); // start from 1
-    static NEXT_ACTIVITY_LOCAL_ID: Cell<ActivityLocalId> = Cell::new(0); // start from 1
+    static NEXT_FINISH_LOCAL_ID: Cell<LocalId> = Cell::new(0); // start from 1
+    static NEXT_ACTIVITY_LOCAL_ID: Cell<LocalId> = Cell::new(0); // start from 1
 }
 
 pub(crate) fn my_worker_id() -> WorkerId {
@@ -68,7 +172,7 @@ pub(crate) fn my_worker_id() -> WorkerId {
     })
 }
 
-fn next_finish_local_id() -> FinishLocalId {
+fn next_finish_local_id() -> LocalId {
     NEXT_FINISH_LOCAL_ID.with(|fid| {
         let old = fid.get();
         let new = old.checked_add(1).expect("Finish id overflows");
@@ -77,7 +181,7 @@ fn next_finish_local_id() -> FinishLocalId {
     })
 }
 
-fn next_activity_local_id() -> ActivityLocalId {
+fn next_activity_local_id() -> LocalId {
     NEXT_ACTIVITY_LOCAL_ID.with(|aid| {
         let old = aid.get();
         let new = old.checked_add(1).expect("Activity id overflows");
@@ -87,15 +191,15 @@ fn next_activity_local_id() -> ActivityLocalId {
 }
 
 pub(crate) fn new_global_finish_id() -> FinishId {
-    let prefix = ((here() as FinishId) << 16 | my_worker_id() as FinishId) << 32;
-    prefix | next_finish_local_id() as FinishId
+    FinishId::new(here(), my_worker_id(), next_finish_local_id())
 }
 
 // place part of lower activity id is the place it spwan
 pub(crate) fn new_global_activity_id(fid: FinishId) -> ActivityId {
-    let suffix = ((here() as ActivityId) << 16 | my_worker_id() as ActivityId) << 32;
-    let suffix = suffix | next_activity_local_id() as ActivityId;
-    (fid as ActivityId) << 64 | suffix
+    ActivityId {
+        finish_id: fid,
+        lower: ActivityIdLower::new(here(), my_worker_id(), next_activity_local_id()),
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +244,21 @@ pub(crate) mod test {
         }
     }
 
+    impl From<usize> for ActivityId{
+        fn from(n: usize) -> Self{
+            ActivityId{
+                finish_id: FinishId::new(n as Place, n as WorkerId, n as LocalId),
+                lower: ActivityIdLower::new(n as Place, n as WorkerId, n as LocalId),
+            }
+        }
+    }
+
+    impl From<usize> for FinishId{
+        fn from(n: usize) -> Self{
+            FinishId::new(n as Place, n as WorkerId, n as LocalId)
+        }
+    }
+
     #[test]
     fn test_worker_id() {
         let _a = TestGuardForStatic::new();
@@ -177,8 +296,8 @@ pub(crate) mod test {
         for _ in range.clone() {
             threads.push(thread::spawn(move || {
                 for j in 1..10 {
-                    assert_eq!(next_finish_local_id(), j as FinishLocalId);
-                    assert_eq!(next_activity_local_id(), j as FinishLocalId);
+                    assert_eq!(next_finish_local_id(), j as LocalId);
+                    assert_eq!(next_activity_local_id(), j as LocalId);
                 }
             }));
         }
@@ -193,15 +312,19 @@ pub(crate) mod test {
 
         // id get works well
         let fid = new_global_finish_id();
-        assert_eq!(fid.get_place(), TEST_HERE);
+        assert_eq!(fid.place, TEST_HERE);
         let aid = new_global_activity_id(fid);
         assert_eq!(aid.get_finish_id(), fid);
         assert_eq!(aid.get_spawned_place(), here());
-        let new_fid: FinishId = 12346;
-        let new_aid = aid.update_finish_id(new_fid);
+        let new_fid = FinishId::from(12346);
+        let mut new_aid = aid.clone();
+        new_aid.update_finish_id(new_fid);
         assert_eq!(new_aid.get_finish_id(), new_fid);
-        assert_eq!(new_aid.update_finish_id(fid), aid); // set back
-        assert_eq!(aid.get_lower(), aid.update_finish_id(0) as ActivityIdLower);
+        new_aid.update_finish_id(fid); // set back
+        assert_eq!(new_aid, aid);
+        let new_aid_lower = new_aid.get_lower();
+        new_aid.update_finish_id(FinishId::from(0));
+        assert_eq!(new_aid_lower, new_aid.get_lower());
 
         // globally unique
         let (atx, arx) = mpsc::sync_channel::<ActivityId>(0);

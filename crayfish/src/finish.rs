@@ -3,7 +3,6 @@ use crate::activity::FunctionLabel;
 use crate::activity::TaskItem;
 use crate::activity::TaskItemExtracter;
 use crate::place::Place;
-use crate::global_id::ActivityIdMethods;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
@@ -31,7 +30,9 @@ pub struct CallingTree {
     panic_backtrace_top: Option<ActivityId>,
 }
 
-const ROOT_ID: ActivityId = 0;
+fn root_id() -> ActivityId {
+    ActivityId::zero()
+}
 
 impl CallingTree {
     pub fn new(initial_call: Vec<ActivityId>) -> Self {
@@ -40,7 +41,7 @@ impl CallingTree {
             panic_backtrace: Vec::new(),
             panic_backtrace_top: None,
         };
-        tree.new_root(ROOT_ID, &initial_call[..], None);
+        tree.new_root(root_id(), &initial_call[..], None);
         tree
     }
     fn new_root(&mut self, id: ActivityId, children: &[ActivityId], frame: Option<FrameInfo>) {
@@ -73,7 +74,7 @@ impl CallingTree {
     pub fn all_done(&self) -> bool {
         if self.lookup_table.len() == 1 {
             // only root left
-            debug_assert!(self.lookup_table.contains_key(&ROOT_ID));
+            debug_assert!(self.lookup_table.contains_key(&root_id()));
             return true;
         }
         false
@@ -189,7 +190,8 @@ mod test {
     use std::any::Any;
     use std::thread::Result;
 
-    fn build_chain(panic_at: Option<ActivityId>) -> Vec<Box<TaskItem>> {
+    fn build_chain(panic_at: Option<usize>) -> Vec<Box<TaskItem>> {
+        let panic_at = panic_at.map(|id| ActivityId::from(id));
         let build_one = |fn_id, place, a_id, sub_activity_id| {
             let mut b = TaskItemBuilder::new(fn_id, place, a_id);
             match panic_at.as_ref() {
@@ -212,14 +214,15 @@ mod test {
                 Box::new(build_one(
                     i as FunctionLabel,
                     i as Place,
-                    i as ActivityId,
-                    (i + 1) as ActivityId,
+                    ActivityId::from(i),
+                    ActivityId::from(i + 1),
                 ))
             })
             .collect();
 
         // last one without sub activities
-        let mut b = TaskItemBuilder::new(size as FunctionLabel, size as Place, size as ActivityId);
+        let mut b =
+            TaskItemBuilder::new(size as FunctionLabel, size as Place, ActivityId::from(size));
         b.ret(std::thread::Result::Ok(1usize));
         items.push(Box::new(b.build()));
 
@@ -230,7 +233,7 @@ mod test {
     pub fn test_calling_tree_chain_ordered() {
         // test a chain
         let items = build_chain(None);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -240,7 +243,7 @@ mod test {
 
         // test a chain with panic
         let items = build_chain(Some(10));
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -260,7 +263,7 @@ mod test {
         // test reorder
         let mut items = build_chain(None);
         items.shuffle(&mut rng);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -271,7 +274,7 @@ mod test {
         // test reorder panic
         let mut items = build_chain(Some(10));
         items.shuffle(&mut rng);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -282,18 +285,17 @@ mod test {
         assert!(bt.is_some());
     }
 
-    fn build_tree(
-        layer: usize,
-        degree: usize,
-        panic_at: Option<Vec<ActivityId>>,
-    ) -> Vec<Box<TaskItem>> {
+    fn build_tree(layer: usize, degree: usize, panic_at: Option<Vec<usize>>) -> Vec<Box<TaskItem>> {
+        // concvert to list of activity id
+        let panic_at: Option<Vec<ActivityId>> =
+            panic_at.map(|l| l.into_iter().map(|a_id| ActivityId::from(a_id)).collect());
         let build_one = |fn_id, place, a_id, sub_activities: Vec<usize>| {
             let fn_id = fn_id as FunctionLabel;
             let place = place as Place;
-            let a_id = a_id as ActivityId;
+            let a_id = ActivityId::from(a_id);
             let sub_activities: Vec<_> = sub_activities
                 .into_iter()
-                .map(|i| i as ActivityId)
+                .map(|i| ActivityId::from(i))
                 .collect();
             let mut b = TaskItemBuilder::new(fn_id, place, a_id);
             match panic_at.as_ref() {
@@ -342,7 +344,7 @@ mod test {
     #[test]
     pub fn test_binary_tree() {
         let items = build_tree(5, 2, None);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -351,7 +353,7 @@ mod test {
         assert!(tree.panic_backtrace().is_none());
 
         let items = build_tree(5, 2, Some(vec![31]));
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -369,7 +371,7 @@ mod test {
 
         let mut items = build_tree(5, 2, None);
         items.shuffle(&mut rng);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);
@@ -379,7 +381,7 @@ mod test {
 
         // panic
         let mut items = build_tree(5, 2, Some(vec![31]));
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         items.shuffle(&mut rng);
         for item in items {
             assert!(!tree.all_done());
@@ -397,7 +399,7 @@ mod test {
         let mut rng = rand::thread_rng();
 
         let mut items = build_tree(7, 2, Some(vec![127, 70, 90]));
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         items.shuffle(&mut rng);
         for item in items {
             assert!(!tree.all_done());
@@ -416,7 +418,7 @@ mod test {
 
         let mut items = build_tree(6, 5, Some(vec![3000]));
         items.shuffle(&mut rng);
-        let mut tree = CallingTree::new(vec![1 as ActivityId]);
+        let mut tree = CallingTree::new(vec![ActivityId::from(1)]);
         for item in items {
             assert!(!tree.all_done());
             tree.activity_done(*item);

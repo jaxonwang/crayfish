@@ -282,7 +282,6 @@ impl HelperFunctionsGenerator {
         quote! {
         async fn #execute_fn_name(a_id: #crayfish_path::activity::ActivityId, waited: ::std::primitive::bool, #punctuated_params) {
             let fn_id = #fn_id; // macro
-            use #crayfish_path::global_id::ActivityIdMethods;
             use #crayfish_path::re_export::futures::FutureExt;
             let finish_id = a_id.get_finish_id();
             use #crayfish_path::runtime::ApgasContext;
@@ -320,7 +319,6 @@ impl HelperFunctionsGenerator {
             let a_id = e.activity_id();
 
             // wait until function return
-            use #crayfish_path::global_id::ActivityIdMethods;
             // #crayfish_path::logging::trace!(
             //     "Got activity:{} from {}", a_id, a_id.get_spawned_place()
             // );
