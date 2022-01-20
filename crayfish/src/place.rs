@@ -3,7 +3,7 @@ use std::ops::Range;
 use once_cell::sync::OnceCell;
 use std::cell::Cell;
 
-pub type Place = u16;
+pub type Place = u32;
 
 #[derive(Copy, Clone, Debug)]
 pub struct PlaceGroup {

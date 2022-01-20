@@ -8,11 +8,8 @@ use serde::Deserialize;
 
 extern crate once_cell;
 
-pub type WorkerId = u16;
-// pub type FinishId = u64;
-// pub type ActivityId = u128;
-// pub type ActivityIdLower = u64;
-type LocalId = u32;
+pub type WorkerId = u32;
+type LocalId = u64;
 
 /// composedID = PlaceId + WorkerId + LocalId
 pub trait ComposedId {
@@ -101,53 +98,6 @@ impl ActivityId {
     }
 }
 
-// #[repr(C)]
-// union ActivityIdUnion {
-//     activity_id: ActivityId,
-//     bytes: [u8; std::mem::size_of::<ActivityId>()],
-// }
-
-// use serde::Serialize;
-// use serde::Serializer;
-// use serde::ser::SerializeSeq;
-// use serde::Deserialize;
-// use serde::Deserializer;
-//
-// impl Serialize for ActivityId {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         let bytes = unsafe { ActivityIdUnion { activity_id: *self }.bytes };
-//         let mut seq = serializer.serialize_seq(Some(bytes.len()))?;
-//         for element in bytes.iter() {
-//             seq.serialize_element(element)?;
-//         }
-//         seq.end()
-//     }
-// }
-// impl<'de> Deserialize<'de> for SquashedMapWrapper {
-//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-//     }
-// }
-
-// impl ActivityIdMethods for ActivityId {
-//     fn get_spawned_place(&self) -> Place {
-//         (*self >> (32 + 16) & ((1 << 16) - 1)) as Place
-//     }
-//     fn get_finish_id(&self) -> FinishId {
-//         (*self >> 64) as FinishId
-//     }
-//     fn update_finish_id(&self, fid: FinishId) -> ActivityId {
-//         (fid as ActivityId) << 64 | (self & ((1 << 64) - 1))
-//     }
-//     fn get_lower(&self) -> ActivityIdLower {
-//         (*self & ((1 << 64) - 1)) as ActivityIdLower
-//     }
-// }
 
 // two level mutex here, but I think the code is clear
 static NEXT_WORKER_ID: Lazy<Mutex<WorkerId>> = Lazy::new(|| Mutex::new(0));
