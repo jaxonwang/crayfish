@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/10634580/159606525-0eca91c8-96ef-4e19-bece-524861896efd.png" width="350" />
+</p>
+
 # Crayfish
 [![Crayfish crate](https://img.shields.io/crates/v/crayfish.svg)](https://crates.io/crates/crayfish)
 [![Crayfish documentation](https://docs.rs/crayfish/badge.svg)](https://docs.rs/crayfish)
