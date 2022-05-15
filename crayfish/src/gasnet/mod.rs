@@ -371,7 +371,7 @@ impl CollectiveContext {
         if event_id > self.next_id {
             self.associate_messages
                 .entry(event_id)
-                .or_insert(vec![])
+                .or_insert_with(Vec::new)
                 .push(data.to_owned());
         } else {
             self.collective_events
